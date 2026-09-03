@@ -1,0 +1,8 @@
+{
+  "name": "Employee Attendance & Office Access Management",
+  "description": "Secure employee attendance and office access management system with role-based controls and office network IP verification.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
