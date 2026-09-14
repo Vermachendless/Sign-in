@@ -251,4 +251,17 @@ export interface AttendanceReportResponse {
   records: AttendanceReportRow[];
 }
 
+export interface OfficeNetworkConfig {
+  approvedIps: string[];
+  dbIps: string[];
+  envIps: string[];
+  currentDetectedIp: string;
+  maskedDetectedIp: string;
+  isCurrentIpApproved: boolean;
+  isCurrentIpLoopback: boolean;
+  ruleType: string;
+  proxyHeadersDetected: boolean;
+  proxyHopCount: number;
+}
+
 

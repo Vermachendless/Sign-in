@@ -1,4 +1,5 @@
 import { maskIpAddress, extractClientIp, verifyOfficeNetwork, getApprovedOfficeIps } from './server/services/network.service.ts';
+import { getDatabase } from './server/db/index.ts';
 import { Request } from 'express';
 
 async function runNetworkDiagnosticTests() {
@@ -83,12 +84,26 @@ async function runNetworkDiagnosticTests() {
   assert(secondResult.isOfficeNetwork === true, 'Second comma-separated IP successfully recognized as office network');
 
   // 7. Test HTTP Endpoint Live (Testing HTTP GET /api/dev/network-diagnostic)
+  const db = getDatabase();
+  const origDbSetting = db.prepare('SELECT value FROM system_settings WHERE key = ?').get('approvedOfficeIPs') as { value: string } | undefined;
+  db.prepare(`
+    INSERT OR REPLACE INTO system_settings (id, key, value, description, updated_at)
+    VALUES ('test-diag-settings-id', 'approvedOfficeIPs', ?, 'Diagnostic test office IPs', ?)
+  `).run(JSON.stringify(['102.129.144.1']), new Date().toISOString());
+
   const base = 'http://127.0.0.1:3000';
   const response = await fetch(`${base}/api/dev/network-diagnostic`, {
     headers: {
       'X-Forwarded-For': '102.129.144.1, 10.0.0.1',
     },
   });
+
+  // Restore DB settings
+  if (origDbSetting) {
+    db.prepare('UPDATE system_settings SET value = ? WHERE key = ?').run(origDbSetting.value, 'approvedOfficeIPs');
+  } else {
+    db.prepare('DELETE FROM system_settings WHERE key = ?').run('approvedOfficeIPs');
+  }
 
   assert(response.status === 200, `Dev endpoint returns 200 OK (got ${response.status})`);
   const body = (await response.json()) as {
@@ -124,6 +139,35 @@ async function runNetworkDiagnosticTests() {
   assert(!rawBodyText.includes('197.210.55.24'), 'Does not leak other configured office IPs');
   assert(!rawBodyText.includes('105.112.43.99'), 'Does not leak full office IP list in response');
   assert(!rawBodyText.includes('password') && !rawBodyText.includes('secret'), 'Does not leak any secrets');
+
+  // 9. Production Loopback Immunity Tests
+  // Confirm that 127.0.0.1 and ::1 can NEVER authorize staff check-in when NODE_ENV=production
+  const prevEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'production';
+
+  // Even if 127.0.0.1 is in OFFICE_IPS
+  process.env.OFFICE_IPS = '127.0.0.1, ::1, 102.129.144.1';
+
+  const mockProdLoopbackReq = {
+    headers: { 'x-forwarded-for': '127.0.0.1' },
+    ip: '127.0.0.1',
+    socket: { remoteAddress: '127.0.0.1' },
+  } as unknown as Request;
+  const prodLoopbackResult = verifyOfficeNetwork(mockProdLoopbackReq);
+  assert(prodLoopbackResult.isOfficeNetwork === false, 'Production strictly rejects 127.0.0.1 even if configured');
+  assert(prodLoopbackResult.matchedRuleType === 'NONE', 'Matched rule type is NONE for loopback in production');
+
+  const mockProdIpv6LoopbackReq = {
+    headers: { 'x-forwarded-for': '::1' },
+    ip: '::1',
+    socket: { remoteAddress: '::1' },
+  } as unknown as Request;
+  const prodIpv6Result = verifyOfficeNetwork(mockProdIpv6LoopbackReq);
+  assert(prodIpv6Result.isOfficeNetwork === false, 'Production strictly rejects ::1 even if configured');
+
+  // Restore environment
+  process.env.NODE_ENV = prevEnv || 'development';
+  process.env.OFFICE_IPS = '';
 
   console.log('\n================================================================');
   console.log(`NETWORK DIAGNOSTIC TEST SUMMARY: ${passed} PASSED, ${failed} FAILED`);

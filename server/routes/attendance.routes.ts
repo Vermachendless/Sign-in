@@ -4,6 +4,7 @@ import { attendanceService } from '../services/attendance.service.ts';
 import { verifyOfficeNetwork } from '../services/network.service.ts';
 import { auditService } from '../services/audit.service.ts';
 import { sendSuccess, sendError, ApiErrorCode } from '../utils/apiResponse.ts';
+import { UserRole, VerificationMethod } from '../../src/types/index.ts';
 
 const router = Router();
 
@@ -33,9 +34,11 @@ router.post('/check-in', requireAuth, requireStaff, (req: AuthenticatedRequest, 
     const staffId = req.user!.id;
     const userAgent = req.headers['user-agent'] || 'Unknown';
 
-    // 1. Enforce Office Network / IP Verification
+    // 1. Enforce Office Network / IP Verification (SUPER_ADMIN bypasses office network verification)
+    const isSuperAdmin = req.user?.role === UserRole.SUPER_ADMIN;
     const networkVerification = verifyOfficeNetwork(req);
-    if (!networkVerification.isOfficeNetwork) {
+
+    if (!networkVerification.isOfficeNetwork && !isSuperAdmin) {
       // Record security audit log for off-network check-in attempt
       auditService.log({
         actorId: staffId,
@@ -64,7 +67,7 @@ router.post('/check-in', requireAuth, requireStaff, (req: AuthenticatedRequest, 
       staffId,
       clientIp: networkVerification.detectedIp,
       userAgent,
-      verificationMethod: networkVerification.verificationMethod,
+      verificationMethod: isSuperAdmin ? VerificationMethod.SUPER_ADMIN : networkVerification.verificationMethod,
     });
 
     if (!result.success || !result.attendance) {
@@ -101,9 +104,11 @@ router.post('/check-out', requireAuth, requireStaff, (req: AuthenticatedRequest,
     const staffId = req.user!.id;
     const userAgent = req.headers['user-agent'] || 'Unknown';
 
-    // 1. Enforce Office Network / IP Verification
+    // 1. Enforce Office Network / IP Verification (SUPER_ADMIN bypasses office network verification)
+    const isSuperAdmin = req.user?.role === UserRole.SUPER_ADMIN;
     const networkVerification = verifyOfficeNetwork(req);
-    if (!networkVerification.isOfficeNetwork) {
+
+    if (!networkVerification.isOfficeNetwork && !isSuperAdmin) {
       // Record security audit log for off-network check-out attempt
       auditService.log({
         actorId: staffId,
@@ -132,7 +137,7 @@ router.post('/check-out', requireAuth, requireStaff, (req: AuthenticatedRequest,
       staffId,
       clientIp: networkVerification.detectedIp,
       userAgent,
-      verificationMethod: networkVerification.verificationMethod,
+      verificationMethod: isSuperAdmin ? VerificationMethod.SUPER_ADMIN : networkVerification.verificationMethod,
     });
 
     if (!result.success || !result.attendance) {

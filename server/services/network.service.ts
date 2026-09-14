@@ -1,5 +1,9 @@
+import net from 'node:net';
 import { Request } from 'express';
 import { getDatabase } from '../db/index.ts';
+import { auditService } from './audit.service.ts';
+import { generateId } from '../utils/crypto.ts';
+import { OfficeNetworkConfig } from '../../src/types/index.ts';
 
 export interface NetworkVerificationResult {
   isOfficeNetwork: boolean;
@@ -9,6 +13,16 @@ export interface NetworkVerificationResult {
   matchedRuleType?: 'ENVIRONMENT' | 'DATABASE_SETTINGS' | 'LOOPBACK' | 'NONE';
   proxyHeadersDetected: boolean;
   proxyHopCount: number;
+  ipSource: 'x-forwarded-for' | 'req.ip' | 'socket.remoteAddress' | 'none';
+}
+
+/**
+ * Checks if an IP address is a local loopback address (127.0.0.1, ::1, localhost, etc.)
+ */
+export function isLoopbackAddress(ip: string | undefined | null): boolean {
+  if (!ip) return false;
+  const clean = normalizeIp(ip);
+  return clean === '127.0.0.1' || clean === '::1' || clean === 'localhost' || clean.startsWith('127.');
 }
 
 /**
@@ -56,7 +70,12 @@ export function maskIpAddress(ip: string): string {
 /**
  * Extract real client IP address from request, taking proxy configurations into account
  */
-export function extractClientIp(req: Request): { ip: string; proxyHeadersDetected: boolean; proxyHopCount: number } {
+export function extractClientIp(req: Request): {
+  ip: string;
+  ipSource: 'x-forwarded-for' | 'req.ip' | 'socket.remoteAddress' | 'none';
+  proxyHeadersDetected: boolean;
+  proxyHopCount: number;
+} {
   let proxyHeadersDetected = false;
   let proxyHopCount = 0;
 
@@ -73,19 +92,19 @@ export function extractClientIp(req: Request): { ip: string; proxyHeadersDetecte
     // The leftmost IP is the original client IP in a standard trusted proxy chain
     if (ips.length > 0 && ips[0]) {
       const clientIp = normalizeIp(ips[0]);
-      return { ip: clientIp, proxyHeadersDetected, proxyHopCount };
+      return { ip: clientIp, ipSource: 'x-forwarded-for', proxyHeadersDetected, proxyHopCount };
     }
   }
 
   // 2. Fallback to req.ip (Express with trust proxy enabled)
   if (req.ip) {
     const clientIp = normalizeIp(req.ip);
-    return { ip: clientIp, proxyHeadersDetected, proxyHopCount };
+    return { ip: clientIp, ipSource: 'req.ip', proxyHeadersDetected, proxyHopCount };
   }
 
   // 3. Fallback to socket remoteAddress
   const socketIp = normalizeIp(req.socket?.remoteAddress || '127.0.0.1');
-  return { ip: socketIp, proxyHeadersDetected, proxyHopCount };
+  return { ip: socketIp, ipSource: 'socket.remoteAddress', proxyHeadersDetected, proxyHopCount };
 }
 
 /**
@@ -154,7 +173,7 @@ export function getApprovedOfficeIps(): { envIps: string[]; dbIps: string[]; all
  * Verifies if an incoming HTTP request originates from an approved office IP/network
  */
 export function verifyOfficeNetwork(req: Request): NetworkVerificationResult {
-  const { ip: rawClientIp, proxyHeadersDetected, proxyHopCount } = extractClientIp(req);
+  const { ip: rawClientIp, ipSource, proxyHeadersDetected, proxyHopCount } = extractClientIp(req);
   const clientIp = normalizeIp(rawClientIp);
   const maskedDetectedIp = maskIpAddress(clientIp);
 
@@ -167,6 +186,7 @@ export function verifyOfficeNetwork(req: Request): NetworkVerificationResult {
       matchedRuleType: 'NONE',
       proxyHeadersDetected,
       proxyHopCount,
+      ipSource: 'none',
     };
   }
 
@@ -179,8 +199,39 @@ export function verifyOfficeNetwork(req: Request): NetworkVerificationResult {
     if (norm) normalizedApproved.add(norm);
   }
 
+  // In production, loopback addresses (127.0.0.1, ::1) must NEVER authorize office access
+  const isProd = process.env.NODE_ENV === 'production';
+  const isLoopbackClient = isLoopbackAddress(clientIp);
+
+  if (isProd && isLoopbackClient) {
+    return {
+      isOfficeNetwork: false,
+      detectedIp: clientIp,
+      maskedDetectedIp,
+      verificationMethod: 'OFFICE_IP',
+      matchedRuleType: 'NONE',
+      proxyHeadersDetected,
+      proxyHopCount,
+      ipSource,
+    };
+  }
+
   // Check direct match
   if (normalizedApproved.has(clientIp)) {
+    // In production, even if a loopback somehow exists in configuration, reject it
+    if (isProd && isLoopbackClient) {
+      return {
+        isOfficeNetwork: false,
+        detectedIp: clientIp,
+        maskedDetectedIp,
+        verificationMethod: 'OFFICE_IP',
+        matchedRuleType: 'NONE',
+        proxyHeadersDetected,
+        proxyHopCount,
+        ipSource,
+      };
+    }
+
     const isEnvMatch = envIps.some((i) => normalizeIp(i) === clientIp);
     const isDbMatch = dbIps.some((i) => normalizeIp(i) === clientIp);
     return {
@@ -188,30 +239,33 @@ export function verifyOfficeNetwork(req: Request): NetworkVerificationResult {
       detectedIp: clientIp,
       maskedDetectedIp,
       verificationMethod: 'OFFICE_IP',
-      matchedRuleType: isEnvMatch ? 'ENVIRONMENT' : isDbMatch ? 'DATABASE_SETTINGS' : 'ENVIRONMENT',
+      matchedRuleType: isLoopbackClient ? 'LOOPBACK' : isEnvMatch ? 'ENVIRONMENT' : isDbMatch ? 'DATABASE_SETTINGS' : 'ENVIRONMENT',
       proxyHeadersDetected,
       proxyHopCount,
+      ipSource,
     };
   }
 
-  // Check loopback equivalence (e.g. localhost, 127.0.0.1, ::1)
-  const isLoopbackClient = clientIp === '127.0.0.1' || clientIp === '::1' || clientIp === 'localhost';
-  const hasLoopbackApproved =
-    normalizedApproved.has('127.0.0.1') || normalizedApproved.has('::1') || normalizedApproved.has('localhost');
+  // In non-production environments only, check if loopback equivalence was explicitly configured
+  if (!isProd && isLoopbackClient) {
+    const hasLoopbackApproved =
+      normalizedApproved.has('127.0.0.1') || normalizedApproved.has('::1') || normalizedApproved.has('localhost');
 
-  if (isLoopbackClient && hasLoopbackApproved) {
-    return {
-      isOfficeNetwork: true,
-      detectedIp: clientIp,
-      maskedDetectedIp,
-      verificationMethod: 'OFFICE_IP',
-      matchedRuleType: 'LOOPBACK',
-      proxyHeadersDetected,
-      proxyHopCount,
-    };
+    if (hasLoopbackApproved) {
+      return {
+        isOfficeNetwork: true,
+        detectedIp: clientIp,
+        maskedDetectedIp,
+        verificationMethod: 'OFFICE_IP',
+        matchedRuleType: 'LOOPBACK',
+        proxyHeadersDetected,
+        proxyHopCount,
+        ipSource,
+      };
+    }
   }
 
-  // Fail closed
+  // Fail closed (e.g. if no matching IP or no valid office IP configured)
   return {
     isOfficeNetwork: false,
     detectedIp: clientIp,
@@ -220,5 +274,185 @@ export function verifyOfficeNetwork(req: Request): NetworkVerificationResult {
     matchedRuleType: 'NONE',
     proxyHeadersDetected,
     proxyHopCount,
+    ipSource,
+  };
+}
+
+/**
+ * Validates whether a string is a valid IPv4 or IPv6 address using node:net
+ */
+export function validateIpFormat(ip: string): boolean {
+  if (!ip) return false;
+  const clean = normalizeIp(ip);
+  return net.isIP(clean) !== 0;
+}
+
+/**
+ * Super Admin: Retrieves current office network configuration and evaluating client IP
+ */
+export function getOfficeNetworkSettings(req?: Request): OfficeNetworkConfig {
+  const { envIps, dbIps, allIps } = getApprovedOfficeIps();
+  let currentDetectedIp = '';
+  let maskedDetectedIp = '';
+  let isCurrentIpApproved = false;
+  let isCurrentIpLoopback = false;
+  let ruleType = 'NONE';
+  let proxyHeadersDetected = false;
+  let proxyHopCount = 0;
+
+  if (req) {
+    const verification = verifyOfficeNetwork(req);
+    currentDetectedIp = verification.detectedIp;
+    maskedDetectedIp = verification.maskedDetectedIp;
+    isCurrentIpApproved = verification.isOfficeNetwork;
+    isCurrentIpLoopback = isLoopbackAddress(verification.detectedIp);
+    ruleType = verification.matchedRuleType || 'NONE';
+    proxyHeadersDetected = verification.proxyHeadersDetected;
+    proxyHopCount = verification.proxyHopCount;
+  }
+
+  return {
+    approvedIps: Array.from(allIps),
+    dbIps,
+    envIps,
+    currentDetectedIp,
+    maskedDetectedIp,
+    isCurrentIpApproved,
+    isCurrentIpLoopback,
+    ruleType,
+    proxyHeadersDetected,
+    proxyHopCount,
+  };
+}
+
+/**
+ * Super Admin: Adds an approved public IP to system_settings.approvedOfficeIPs with audit logging
+ */
+export function addApprovedOfficeIp(
+  actorId: string,
+  ipInput: string,
+  clientIp?: string,
+  userAgent?: string
+): { success: boolean; approvedIps: string[]; dbIps: string[]; addedIp?: string; error?: string } {
+  const clean = normalizeIp(ipInput);
+  if (!clean || !validateIpFormat(clean)) {
+    return {
+      success: false,
+      approvedIps: [],
+      dbIps: [],
+      error: 'Invalid IP address format. Must be a valid IPv4 or IPv6 address.',
+    };
+  }
+
+  const isProd = process.env.NODE_ENV === 'production';
+  if (isProd && isLoopbackAddress(clean)) {
+    return {
+      success: false,
+      approvedIps: [],
+      dbIps: [],
+      error: 'Loopback addresses (127.0.0.1, ::1) cannot be configured as office networks in production.',
+    };
+  }
+
+  const db = getDatabase();
+  const { dbIps } = getApprovedOfficeIps();
+
+  if (dbIps.includes(clean)) {
+    const { allIps } = getApprovedOfficeIps();
+    return {
+      success: true,
+      approvedIps: Array.from(allIps),
+      dbIps,
+      addedIp: clean,
+    };
+  }
+
+  const updatedDbIps = [...dbIps, clean];
+  const now = new Date().toISOString();
+
+  db.prepare(`
+    INSERT INTO system_settings (id, key, value, description, updated_at, updated_by)
+    VALUES (?, 'approvedOfficeIPs', ?, 'Approved public IP addresses for company office network Wi-Fi check-in', ?, ?)
+    ON CONFLICT(key) DO UPDATE SET
+      value = excluded.value,
+      updated_at = excluded.updated_at,
+      updated_by = excluded.updated_by
+  `).run(generateId(), JSON.stringify(updatedDbIps), now, actorId);
+
+  auditService.log({
+    actorId,
+    action: 'OFFICE_IP_ADDED',
+    ipAddress: clientIp || null,
+    userAgent: userAgent || null,
+    metadata: {
+      addedIp: clean,
+      previousIps: dbIps,
+      updatedIps: updatedDbIps,
+    },
+  });
+
+  const { allIps } = getApprovedOfficeIps();
+
+  return {
+    success: true,
+    approvedIps: Array.from(allIps),
+    dbIps: updatedDbIps,
+    addedIp: clean,
+  };
+}
+
+/**
+ * Super Admin: Removes an approved IP from system_settings.approvedOfficeIPs with audit logging
+ */
+export function removeApprovedOfficeIp(
+  actorId: string,
+  ipInput: string,
+  clientIp?: string,
+  userAgent?: string
+): { success: boolean; approvedIps: string[]; dbIps: string[]; removedIp?: string; error?: string } {
+  const clean = normalizeIp(ipInput);
+  if (!clean) {
+    return {
+      success: false,
+      approvedIps: [],
+      dbIps: [],
+      error: 'IP address to remove is required.',
+    };
+  }
+
+  const db = getDatabase();
+  const { dbIps } = getApprovedOfficeIps();
+
+  const updatedDbIps = dbIps.filter((ip) => normalizeIp(ip) !== clean);
+  const now = new Date().toISOString();
+
+  db.prepare(`
+    INSERT INTO system_settings (id, key, value, description, updated_at, updated_by)
+    VALUES (?, 'approvedOfficeIPs', ?, 'Approved public IP addresses for company office network Wi-Fi check-in', ?, ?)
+    ON CONFLICT(key) DO UPDATE SET
+      value = excluded.value,
+      updated_at = excluded.updated_at,
+      updated_by = excluded.updated_by
+  `).run(generateId(), JSON.stringify(updatedDbIps), now, actorId);
+
+  auditService.log({
+    actorId,
+    action: 'OFFICE_IP_REMOVED',
+    ipAddress: clientIp || null,
+    userAgent: userAgent || null,
+    metadata: {
+      removedIp: clean,
+      previousIps: dbIps,
+      updatedIps: updatedDbIps,
+    },
+  });
+
+  const { allIps } = getApprovedOfficeIps();
+
+  return {
+    success: true,
+    approvedIps: Array.from(allIps),
+    dbIps: updatedDbIps,
+    removedIp: clean,
   };
 }

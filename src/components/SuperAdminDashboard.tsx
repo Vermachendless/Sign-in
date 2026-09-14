@@ -11,14 +11,17 @@ import {
   Clock,
   Layers,
   AlertTriangle,
+  Wifi,
+  ArrowRight,
 } from 'lucide-react';
 import { NetworkDiagnosticCard } from './NetworkDiagnosticCard.tsx';
 import { TodayAttendanceTable } from './TodayAttendanceTable.tsx';
 import { StaffManagement } from './StaffManagement.tsx';
 import { AttendanceReports } from './AttendanceReports.tsx';
+import { OfficeNetworkSettings } from './OfficeNetworkSettings.tsx';
 import { AdminDashboardSummary } from '../types/index.ts';
 
-type ActiveTab = 'TODAY' | 'STAFF' | 'REPORTS' | 'GOVERNANCE';
+type ActiveTab = 'TODAY' | 'STAFF' | 'REPORTS' | 'NETWORK' | 'GOVERNANCE';
 
 export const SuperAdminDashboard: React.FC = () => {
   const { user } = useAuth();
@@ -139,6 +142,19 @@ export const SuperAdminDashboard: React.FC = () => {
             </button>
 
             <button
+              id="superadmin-tab-network"
+              onClick={() => setActiveTab('NETWORK')}
+              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs transition cursor-pointer ${
+                activeTab === 'NETWORK'
+                  ? 'bg-brand-yellow text-brand-black font-bold shadow-xs'
+                  : 'text-brand-muted hover:text-brand-black font-semibold'
+              }`}
+            >
+              <Wifi className="w-3.5 h-3.5" />
+              <span>Office Networks</span>
+            </button>
+
+            <button
               id="superadmin-tab-governance"
               onClick={() => setActiveTab('GOVERNANCE')}
               className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs transition cursor-pointer ${
@@ -171,6 +187,10 @@ export const SuperAdminDashboard: React.FC = () => {
         <AttendanceReports />
       )}
 
+      {activeTab === 'NETWORK' && (
+        <OfficeNetworkSettings />
+      )}
+
       {activeTab === 'GOVERNANCE' && (
         <div className="space-y-6">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -197,6 +217,25 @@ export const SuperAdminDashboard: React.FC = () => {
                   <p className="mt-1 text-xs text-brand-muted">
                     All staff creation, editing, activation, and status transitions are audited chronologically.
                   </p>
+                </div>
+
+                <div className="p-4 rounded-xl bg-brand-bg border border-brand-border sm:col-span-2 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <div className="font-semibold text-brand-black flex items-center gap-2">
+                      <Wifi className="w-4 h-4 text-brand-yellow" /> Office Network &amp; Attendance Access
+                    </div>
+                    <p className="mt-1 text-xs text-brand-muted">
+                      Manage approved public office IPs for staff Wi-Fi check-in. Off-network attempts are blocked with 403.
+                    </p>
+                  </div>
+                  <button
+                    id="gov-jump-to-network-btn"
+                    onClick={() => setActiveTab('NETWORK')}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-neutral-900 text-brand-yellow hover:bg-neutral-800 transition cursor-pointer self-start sm:self-auto shrink-0"
+                  >
+                    <span>Manage Networks</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
                 </div>
               </div>
             </div>

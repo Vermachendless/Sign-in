@@ -26,6 +26,13 @@ async function runPhase2Tests() {
   const db = getDatabase();
   await seedDatabase();
 
+  // Explicitly configure test office IP in system settings for testing
+  const origDbSetting = db.prepare('SELECT value FROM system_settings WHERE key = ?').get('approvedOfficeIPs') as { value: string } | undefined;
+  db.prepare(`
+    INSERT OR REPLACE INTO system_settings (id, key, value, description, updated_at)
+    VALUES ('test-phase2-settings-id', 'approvedOfficeIPs', ?, 'Test approved office IPs', ?)
+  `).run(JSON.stringify(['102.129.144.1']), new Date().toISOString());
+
   // Clean up any test attendance records from previous runs to ensure clean test state
   db.prepare('DELETE FROM attendance').run();
 
@@ -222,7 +229,10 @@ async function runPhase2Tests() {
   // 12f. Jane checks out via HTTP
   const janeHttpCheckOut = await fetch(`${base}/api/attendance/check-out`, {
     method: 'POST',
-    headers: { 'Authorization': `Bearer ${janeToken}` },
+    headers: {
+      'Authorization': `Bearer ${janeToken}`,
+      'X-Forwarded-For': '102.129.144.1, 10.0.0.1',
+    },
   });
   assert(janeHttpCheckOut.status === 200, `Jane HTTP check-out succeeds with 200 (got ${janeHttpCheckOut.status})`);
 
@@ -253,6 +263,13 @@ async function runPhase2Tests() {
     return meta.includes('password') || meta.includes('token') || meta.includes('secret');
   });
   assert(!auditHasLeakedSecrets, 'Attendance audit logs contain zero tokens, secrets, or passwords');
+
+  // Restore original DB settings
+  if (origDbSetting) {
+    db.prepare('UPDATE system_settings SET value = ? WHERE key = ?').run(origDbSetting.value, 'approvedOfficeIPs');
+  } else {
+    db.prepare('DELETE FROM system_settings WHERE key = ?').run('approvedOfficeIPs');
+  }
 
   console.log('\n====================================================');
   console.log(`PHASE 2 TEST SUMMARY: ${passed} PASSED, ${failed} FAILED`);

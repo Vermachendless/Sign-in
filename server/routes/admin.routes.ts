@@ -1,6 +1,12 @@
 import { Router, Response } from 'express';
-import { requireAuth, requireAdmin, AuthenticatedRequest } from '../middleware/auth.ts';
+import { requireAuth, requireAdmin, requireSuperAdmin, AuthenticatedRequest } from '../middleware/auth.ts';
 import { adminService } from '../services/admin.service.ts';
+import {
+  getOfficeNetworkSettings,
+  addApprovedOfficeIp,
+  removeApprovedOfficeIp,
+  extractClientIp,
+} from '../services/network.service.ts';
 import reportRoutes from './report.routes.ts';
 import { sendSuccess, sendError, ApiErrorCode } from '../utils/apiResponse.ts';
 import { UserRole, UserStatus } from '../../src/types/index.ts';
@@ -238,6 +244,158 @@ router.patch('/staff/:id/status', (req: AuthenticatedRequest, res: Response) => 
   } catch (error) {
     console.error('[AdminRoutes] setStaffStatus error:', error);
     return sendError(res, 500, ApiErrorCode.INTERNAL_ERROR, 'An unexpected error occurred while changing staff status.');
+  }
+});
+
+/**
+ * GET /api/admin/office-network
+ * Super Admin only: Retrieves approved office network settings and current client IP evaluation
+ */
+router.get('/office-network', requireSuperAdmin, (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const config = getOfficeNetworkSettings(req);
+    return sendSuccess(res, config);
+  } catch (error) {
+    console.error('[AdminRoutes] getOfficeNetwork error:', error);
+    return sendError(res, 500, ApiErrorCode.INTERNAL_ERROR, 'Failed to retrieve office network settings.');
+  }
+});
+
+/**
+ * POST /api/admin/office-network
+ * Super Admin only: Adds an approved public IP to system_settings.approvedOfficeIPs
+ */
+router.post('/office-network', requireSuperAdmin, (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const actor = req.user!;
+    const { ip } = req.body || {};
+
+    if (!ip || typeof ip !== 'string') {
+      return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, 'Valid IP address string is required.');
+    }
+
+    const { ip: clientIp } = extractClientIp(req);
+    const userAgent = req.headers['user-agent'] || 'Unknown';
+
+    const result = addApprovedOfficeIp(actor.id, ip, clientIp, userAgent);
+
+    if (!result.success) {
+      return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, result.error || 'Failed to add office IP.');
+    }
+
+    const config = getOfficeNetworkSettings(req);
+    return sendSuccess(
+      res,
+      {
+        ...config,
+        message: `IP ${result.addedIp} added to approved office network list successfully.`,
+      },
+      201
+    );
+  } catch (error) {
+    console.error('[AdminRoutes] addOfficeIp error:', error);
+    return sendError(res, 500, ApiErrorCode.INTERNAL_ERROR, 'Failed to add approved office IP.');
+  }
+});
+
+/**
+ * POST /api/admin/office-network/add-current
+ * Super Admin only: Adds the server-detected public IP to system_settings.approvedOfficeIPs
+ */
+router.post('/office-network/add-current', requireSuperAdmin, (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const actor = req.user!;
+    const { ip: clientIp } = extractClientIp(req);
+    const userAgent = req.headers['user-agent'] || 'Unknown';
+
+    if (!clientIp) {
+      return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, 'Could not detect client IP from current connection.');
+    }
+
+    const result = addApprovedOfficeIp(actor.id, clientIp, clientIp, userAgent);
+
+    if (!result.success) {
+      return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, result.error || 'Failed to add current IP.');
+    }
+
+    const config = getOfficeNetworkSettings(req);
+    return sendSuccess(
+      res,
+      {
+        ...config,
+        message: `Current IP ${result.addedIp} added to approved office network list successfully.`,
+      },
+      200
+    );
+  } catch (error) {
+    console.error('[AdminRoutes] addCurrentOfficeIp error:', error);
+    return sendError(res, 500, ApiErrorCode.INTERNAL_ERROR, 'Failed to add current detected IP.');
+  }
+});
+
+/**
+ * DELETE /api/admin/office-network/:ip
+ * Super Admin only: Removes an approved IP from system_settings.approvedOfficeIPs
+ */
+router.delete('/office-network/:ip', requireSuperAdmin, (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const actor = req.user!;
+    const { ip } = req.params;
+
+    if (!ip) {
+      return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, 'IP address parameter is required.');
+    }
+
+    const { ip: clientIp } = extractClientIp(req);
+    const userAgent = req.headers['user-agent'] || 'Unknown';
+
+    const result = removeApprovedOfficeIp(actor.id, ip, clientIp, userAgent);
+
+    if (!result.success) {
+      return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, result.error || 'Failed to remove office IP.');
+    }
+
+    const config = getOfficeNetworkSettings(req);
+    return sendSuccess(res, {
+      ...config,
+      message: `IP ${result.removedIp} removed from approved office network list successfully.`,
+    });
+  } catch (error) {
+    console.error('[AdminRoutes] deleteOfficeIp error:', error);
+    return sendError(res, 500, ApiErrorCode.INTERNAL_ERROR, 'Failed to remove approved office IP.');
+  }
+});
+
+/**
+ * POST /api/admin/office-network/remove
+ * Super Admin only: Alternative POST endpoint for removing an approved IP from system_settings.approvedOfficeIPs
+ */
+router.post('/office-network/remove', requireSuperAdmin, (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const actor = req.user!;
+    const { ip } = req.body || {};
+
+    if (!ip || typeof ip !== 'string') {
+      return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, 'Valid IP address string is required.');
+    }
+
+    const { ip: clientIp } = extractClientIp(req);
+    const userAgent = req.headers['user-agent'] || 'Unknown';
+
+    const result = removeApprovedOfficeIp(actor.id, ip, clientIp, userAgent);
+
+    if (!result.success) {
+      return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, result.error || 'Failed to remove office IP.');
+    }
+
+    const config = getOfficeNetworkSettings(req);
+    return sendSuccess(res, {
+      ...config,
+      message: `IP ${result.removedIp} removed from approved office network list successfully.`,
+    });
+  } catch (error) {
+    console.error('[AdminRoutes] removeOfficeIp error:', error);
+    return sendError(res, 500, ApiErrorCode.INTERNAL_ERROR, 'Failed to remove approved office IP.');
   }
 });
 

@@ -182,10 +182,15 @@ export async function seedDatabase() {
   }
 
   // 6. Seed System Settings
+  // In production, office IPs must be configured via environment (OFFICE_IPS) or explicit Super Admin settings
+  const initialOfficeIps = process.env.OFFICE_IPS
+    ? process.env.OFFICE_IPS.split(',').map((s) => s.trim()).filter(Boolean)
+    : [];
+
   const defaultSettings = [
     {
       key: 'approvedOfficeIPs',
-      value: JSON.stringify(['102.129.144.1', '127.0.0.1', '::1']),
+      value: JSON.stringify(initialOfficeIps),
       description: 'Approved public IP addresses for company office network Wi-Fi check-in',
     },
     {

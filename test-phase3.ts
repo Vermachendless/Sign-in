@@ -127,13 +127,11 @@ async function runPhase3Tests() {
   assert(vDenied.isOfficeNetwork === false, 'Unauthorized IP denied');
   assert(vDenied.matchedRuleType === 'NONE', 'Denied rule type is NONE');
 
-  // Restore database setting & env
-  if (origDbSetting) {
-    db.prepare('UPDATE system_settings SET value = ? WHERE key = ?').run(origDbSetting.value, 'approvedOfficeIPs');
-  } else {
-    db.prepare('UPDATE system_settings SET value = ? WHERE key = ?').run(JSON.stringify(['102.129.144.1', '127.0.0.1', '::1']), 'approvedOfficeIPs');
-  }
-  process.env.OFFICE_IPS = origEnv || '102.129.144.1,127.0.0.1,::1';
+  // Set approved office IP in database setting for HTTP tests
+  db.prepare(`
+    INSERT OR REPLACE INTO system_settings (id, key, value, description, updated_at)
+    VALUES ('http-test-setting-id', 'approvedOfficeIPs', ?, 'Test office IPs', ?)
+  `).run(JSON.stringify(['102.129.144.1']), new Date().toISOString());
 
   // 6. HTTP Integration Tests (Attendance Check-In & Check-Out)
   const base = 'http://127.0.0.1:3000';
@@ -280,6 +278,14 @@ async function runPhase3Tests() {
   const serializedAudit = JSON.stringify(auditLogsSample);
   assert(!serializedAudit.includes('StaffSecure123!'), 'Zero plaintext passwords in audit logs');
   assert(!serializedAudit.includes(johnToken), 'Zero session tokens in audit logs');
+
+  // Restore database setting & env
+  if (origDbSetting) {
+    db.prepare('UPDATE system_settings SET value = ? WHERE key = ?').run(origDbSetting.value, 'approvedOfficeIPs');
+  } else {
+    db.prepare('DELETE FROM system_settings WHERE key = ?').run('approvedOfficeIPs');
+  }
+  process.env.OFFICE_IPS = origEnv || '';
 
   console.log('\n====================================================');
   console.log(`PHASE 3 TEST SUMMARY: ${passed} PASSED, ${failed} FAILED`);
