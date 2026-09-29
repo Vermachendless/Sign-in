@@ -15,15 +15,48 @@ import { NetworkDiagnosticCard } from './NetworkDiagnosticCard.tsx';
 import { TodayAttendanceTable } from './TodayAttendanceTable.tsx';
 import { StaffManagement } from './StaffManagement.tsx';
 import { AttendanceReports } from './AttendanceReports.tsx';
+import { AuditLogsView } from './AuditLogsView.tsx';
 import { AdminDashboardSummary } from '../types/index.ts';
+import { AppRoute } from './Sidebar.tsx';
 
-type ActiveTab = 'TODAY' | 'STAFF' | 'REPORTS' | 'SECURITY';
+type ActiveTab = 'TODAY' | 'STAFF' | 'REPORTS' | 'SECURITY' | 'AUDIT';
 
-export const AdminDashboard: React.FC = () => {
+interface AdminDashboardProps {
+  currentRoute?: AppRoute;
+  onNavigate?: (route: AppRoute) => void;
+}
+
+export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentRoute, onNavigate }) => {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<ActiveTab>('TODAY');
   const [summary, setSummary] = useState<AdminDashboardSummary | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(true);
+
+  // Sync with incoming currentRoute from global sidebar
+  useEffect(() => {
+    if (!currentRoute) return;
+    if (currentRoute === 'audit-logs') {
+      setActiveTab('AUDIT');
+    } else if (currentRoute === 'reports') {
+      setActiveTab('REPORTS');
+    } else if (currentRoute === 'staff') {
+      setActiveTab('STAFF');
+    } else if (currentRoute === 'security') {
+      setActiveTab('SECURITY');
+    } else if (currentRoute === 'today' || currentRoute === 'attendance') {
+      setActiveTab('TODAY');
+    }
+  }, [currentRoute]);
+
+  const handleTabChange = (tab: ActiveTab) => {
+    setActiveTab(tab);
+    if (!onNavigate) return;
+    if (tab === 'TODAY') onNavigate('today');
+    else if (tab === 'STAFF') onNavigate('staff');
+    else if (tab === 'REPORTS') onNavigate('reports');
+    else if (tab === 'SECURITY') onNavigate('security');
+    else if (tab === 'AUDIT') onNavigate('audit-logs');
+  };
 
   // Live RBAC verification tester state
   const [testResult, setTestResult] = useState<{
@@ -101,7 +134,7 @@ export const AdminDashboard: React.FC = () => {
           <div className="flex items-center bg-brand-bg p-1 rounded-xl border border-brand-border self-start sm:self-auto">
             <button
               id="tab-today-attendance"
-              onClick={() => setActiveTab('TODAY')}
+              onClick={() => handleTabChange('TODAY')}
               className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs transition cursor-pointer ${
                 activeTab === 'TODAY'
                   ? 'bg-brand-yellow text-brand-black font-bold shadow-xs'
@@ -114,7 +147,7 @@ export const AdminDashboard: React.FC = () => {
 
             <button
               id="tab-staff-management"
-              onClick={() => setActiveTab('STAFF')}
+              onClick={() => handleTabChange('STAFF')}
               className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs transition cursor-pointer ${
                 activeTab === 'STAFF'
                   ? 'bg-brand-yellow text-brand-black font-bold shadow-xs'
@@ -127,7 +160,7 @@ export const AdminDashboard: React.FC = () => {
 
             <button
               id="tab-attendance-reports"
-              onClick={() => setActiveTab('REPORTS')}
+              onClick={() => handleTabChange('REPORTS')}
               className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs transition cursor-pointer ${
                 activeTab === 'REPORTS'
                   ? 'bg-brand-yellow text-brand-black font-bold shadow-xs'
@@ -140,7 +173,7 @@ export const AdminDashboard: React.FC = () => {
 
             <button
               id="tab-security-diagnostics"
-              onClick={() => setActiveTab('SECURITY')}
+              onClick={() => handleTabChange('SECURITY')}
               className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs transition cursor-pointer ${
                 activeTab === 'SECURITY'
                   ? 'bg-brand-yellow text-brand-black font-bold shadow-xs'
@@ -169,6 +202,10 @@ export const AdminDashboard: React.FC = () => {
 
       {activeTab === 'REPORTS' && (
         <AttendanceReports />
+      )}
+
+      {activeTab === 'AUDIT' && (
+        <AuditLogsView />
       )}
 
       {activeTab === 'SECURITY' && (

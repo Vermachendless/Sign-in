@@ -18,8 +18,14 @@ import {
   AttendanceHistoryItem,
   AttendanceDailyState,
 } from '../types/index.ts';
+import { AppRoute } from './Sidebar.tsx';
 
-export const StaffDashboard: React.FC = () => {
+interface StaffDashboardProps {
+  currentRoute?: AppRoute;
+  onNavigate?: (route: AppRoute) => void;
+}
+
+export const StaffDashboard: React.FC<StaffDashboardProps> = ({ currentRoute }) => {
   const { user } = useAuth();
 
   const [todayData, setTodayData] = useState<TodayAttendanceData | null>(null);
@@ -91,6 +97,16 @@ export const StaffDashboard: React.FC = () => {
   useEffect(() => {
     loadAttendanceData();
   }, [loadAttendanceData]);
+
+  // Scroll to attendance history section when requested via sidebar
+  useEffect(() => {
+    if (currentRoute === 'my-attendance') {
+      const el = document.getElementById('staff-my-attendance-section');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth' });
+      }
+    }
+  }, [currentRoute]);
 
   // Handle Check-In Action
   const handleCheckIn = async () => {
@@ -504,7 +520,7 @@ export const StaffDashboard: React.FC = () => {
       </div>
 
       {/* Recent Attendance History Table */}
-      <div className="bg-white rounded-2xl border border-brand-border p-6 sm:p-7 shadow-xs">
+      <div id="staff-my-attendance-section" className="bg-white rounded-2xl border border-brand-border p-6 sm:p-7 shadow-xs scroll-mt-20">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
           <div className="flex items-center gap-2">
             <History className="w-5 h-5 text-brand-black" />

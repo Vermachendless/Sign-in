@@ -19,15 +19,51 @@ import { TodayAttendanceTable } from './TodayAttendanceTable.tsx';
 import { StaffManagement } from './StaffManagement.tsx';
 import { AttendanceReports } from './AttendanceReports.tsx';
 import { OfficeNetworkSettings } from './OfficeNetworkSettings.tsx';
+import { AuditLogsView } from './AuditLogsView.tsx';
 import { AdminDashboardSummary } from '../types/index.ts';
+import { AppRoute } from './Sidebar.tsx';
 
-type ActiveTab = 'TODAY' | 'STAFF' | 'REPORTS' | 'NETWORK' | 'GOVERNANCE';
+type ActiveTab = 'TODAY' | 'STAFF' | 'REPORTS' | 'NETWORK' | 'GOVERNANCE' | 'AUDIT';
 
-export const SuperAdminDashboard: React.FC = () => {
+interface SuperAdminDashboardProps {
+  currentRoute?: AppRoute;
+  onNavigate?: (route: AppRoute) => void;
+}
+
+export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ currentRoute, onNavigate }) => {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<ActiveTab>('TODAY');
   const [summary, setSummary] = useState<AdminDashboardSummary | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(true);
+
+  // Sync with incoming currentRoute from global sidebar
+  useEffect(() => {
+    if (!currentRoute) return;
+    if (currentRoute === 'audit-logs') {
+      setActiveTab('AUDIT');
+    } else if (currentRoute === 'office-networks') {
+      setActiveTab('NETWORK');
+    } else if (currentRoute === 'governance') {
+      setActiveTab('GOVERNANCE');
+    } else if (currentRoute === 'reports') {
+      setActiveTab('REPORTS');
+    } else if (currentRoute === 'staff' || currentRoute === 'users-roles') {
+      setActiveTab('STAFF');
+    } else if (currentRoute === 'today' || currentRoute === 'attendance') {
+      setActiveTab('TODAY');
+    }
+  }, [currentRoute]);
+
+  const handleTabChange = (tab: ActiveTab) => {
+    setActiveTab(tab);
+    if (!onNavigate) return;
+    if (tab === 'TODAY') onNavigate('today');
+    else if (tab === 'STAFF') onNavigate('staff');
+    else if (tab === 'REPORTS') onNavigate('reports');
+    else if (tab === 'NETWORK') onNavigate('office-networks');
+    else if (tab === 'GOVERNANCE') onNavigate('governance');
+    else if (tab === 'AUDIT') onNavigate('audit-logs');
+  };
 
   const [testResult, setTestResult] = useState<{
     endpoint: string;
@@ -104,7 +140,7 @@ export const SuperAdminDashboard: React.FC = () => {
           <div className="flex items-center bg-brand-bg p-1 rounded-xl border border-brand-border self-start sm:self-auto">
             <button
               id="superadmin-tab-today"
-              onClick={() => setActiveTab('TODAY')}
+              onClick={() => handleTabChange('TODAY')}
               className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs transition cursor-pointer ${
                 activeTab === 'TODAY'
                   ? 'bg-brand-yellow text-brand-black font-bold shadow-xs'
@@ -117,7 +153,7 @@ export const SuperAdminDashboard: React.FC = () => {
 
             <button
               id="superadmin-tab-staff"
-              onClick={() => setActiveTab('STAFF')}
+              onClick={() => handleTabChange('STAFF')}
               className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs transition cursor-pointer ${
                 activeTab === 'STAFF'
                   ? 'bg-brand-yellow text-brand-black font-bold shadow-xs'
@@ -130,7 +166,7 @@ export const SuperAdminDashboard: React.FC = () => {
 
             <button
               id="superadmin-tab-reports"
-              onClick={() => setActiveTab('REPORTS')}
+              onClick={() => handleTabChange('REPORTS')}
               className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs transition cursor-pointer ${
                 activeTab === 'REPORTS'
                   ? 'bg-brand-yellow text-brand-black font-bold shadow-xs'
@@ -143,7 +179,7 @@ export const SuperAdminDashboard: React.FC = () => {
 
             <button
               id="superadmin-tab-network"
-              onClick={() => setActiveTab('NETWORK')}
+              onClick={() => handleTabChange('NETWORK')}
               className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs transition cursor-pointer ${
                 activeTab === 'NETWORK'
                   ? 'bg-brand-yellow text-brand-black font-bold shadow-xs'
@@ -156,7 +192,7 @@ export const SuperAdminDashboard: React.FC = () => {
 
             <button
               id="superadmin-tab-governance"
-              onClick={() => setActiveTab('GOVERNANCE')}
+              onClick={() => handleTabChange('GOVERNANCE')}
               className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs transition cursor-pointer ${
                 activeTab === 'GOVERNANCE'
                   ? 'bg-brand-yellow text-brand-black font-bold shadow-xs'
@@ -189,6 +225,10 @@ export const SuperAdminDashboard: React.FC = () => {
 
       {activeTab === 'NETWORK' && (
         <OfficeNetworkSettings />
+      )}
+
+      {activeTab === 'AUDIT' && (
+        <AuditLogsView />
       )}
 
       {activeTab === 'GOVERNANCE' && (
@@ -230,7 +270,7 @@ export const SuperAdminDashboard: React.FC = () => {
                   </div>
                   <button
                     id="gov-jump-to-network-btn"
-                    onClick={() => setActiveTab('NETWORK')}
+                    onClick={() => handleTabChange('NETWORK')}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-neutral-900 text-brand-yellow hover:bg-neutral-800 transition cursor-pointer self-start sm:self-auto shrink-0"
                   >
                     <span>Manage Networks</span>

@@ -106,6 +106,11 @@ export interface AuditLog {
   userAgent?: string | null;
   metadata?: string | null;
   createdAt: string;
+  actorName?: string | null;
+  actorEmail?: string | null;
+  actorRole?: string | null;
+  targetUserName?: string | null;
+  targetUserEmail?: string | null;
 }
 
 export interface ApiResponse<T = unknown> {
@@ -263,5 +268,114 @@ export interface OfficeNetworkConfig {
   proxyHeadersDetected: boolean;
   proxyHopCount: number;
 }
+
+export enum EventStatus {
+  DRAFT = 'DRAFT',
+  PENDING_APPROVAL = 'PENDING_APPROVAL',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED',
+  CANCELLED = 'CANCELLED',
+  COMPLETED = 'COMPLETED',
+}
+
+export interface EventRecord {
+  id: string;
+  title: string;
+  description: string | null;
+  location: string;
+  startAt: string;
+  endAt: string;
+  status: EventStatus;
+  createdBy: string;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  rejectionReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+  creatorName?: string | null;
+  creatorEmail?: string | null;
+  creatorRole?: string | null;
+  approverName?: string | null;
+  approverEmail?: string | null;
+  formattedStart?: string;
+  formattedEnd?: string;
+}
+
+export interface CreateEventInput {
+  title: string;
+  description?: string | null;
+  location: string;
+  startAt: string;
+  endAt: string;
+}
+
+export interface UpdateEventInput {
+  title?: string;
+  description?: string | null;
+  location?: string;
+  startAt?: string;
+  endAt?: string;
+}
+
+export enum PassType {
+  EVENT = 'EVENT',
+  VISITOR = 'VISITOR',
+}
+
+export enum AccessPassStatus {
+  ACTIVE = 'ACTIVE',
+  REVOKED = 'REVOKED',
+  EXPIRED = 'EXPIRED',
+  EXHAUSTED = 'EXHAUSTED',
+}
+
+export interface AccessPassRecord {
+  id: string;
+  passType: PassType;
+  eventId?: string | null;
+  hostStaffId?: string | null;
+  displayCode: string;
+  validFrom: string;
+  validUntil: string;
+  status: AccessPassStatus;
+  maxUses?: number | null;
+  useCount: number;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  revokedAt?: string | null;
+  revokedBy?: string | null;
+  revokeReason?: string | null;
+  rawToken?: string;
+  eventTitle?: string | null;
+  eventLocation?: string | null;
+  creatorName?: string | null;
+  hostStaffName?: string | null;
+  revokerName?: string | null;
+  formattedValidFrom?: string;
+  formattedValidUntil?: string;
+}
+
+export interface VerificationResult {
+  valid: boolean;
+  code?: string;
+  message?: string;
+  passType?: PassType;
+  displayCode?: string;
+  event?: {
+    id: string;
+    title: string;
+    location: string;
+    startAt: string;
+    endAt: string;
+  } | null;
+  validFrom?: string;
+  validUntil?: string;
+  maxUses?: number | null;
+  useCount?: number;
+  remainingUses?: number | null;
+}
+
+
 
 

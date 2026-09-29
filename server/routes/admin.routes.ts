@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { requireAuth, requireAdmin, requireSuperAdmin, AuthenticatedRequest } from '../middleware/auth.ts';
 import { adminService } from '../services/admin.service.ts';
+import { auditService } from '../services/audit.service.ts';
 import {
   getOfficeNetworkSettings,
   addApprovedOfficeIp,
@@ -23,6 +24,25 @@ router.use(requireAuth, requireAdmin);
  * Base path: /api/admin/reports
  */
 router.use('/reports', reportRoutes);
+
+/**
+ * GET /api/admin/audit-logs
+ * Retrieves immutable audit logs with pagination and search
+ */
+router.get('/audit-logs', (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string, 10) || 20));
+    const action = typeof req.query.action === 'string' ? req.query.action : undefined;
+    const search = typeof req.query.search === 'string' ? req.query.search : undefined;
+
+    const result = auditService.listLogs({ page, limit, action, search });
+    return sendSuccess(res, result);
+  } catch (error) {
+    console.error('[AdminRoutes] getAuditLogs error:', error);
+    return sendError(res, 500, ApiErrorCode.INTERNAL_ERROR, 'Failed to retrieve audit log records.');
+  }
+});
 
 /**
  * GET /api/admin/dashboard

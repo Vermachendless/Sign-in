@@ -1,15 +1,69 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext.tsx';
 import { Login } from './components/Login.tsx';
-import { Navbar } from './components/Navbar.tsx';
+import { Sidebar, AppRoute } from './components/Sidebar.tsx';
+import { Header } from './components/Header.tsx';
 import { StaffDashboard } from './components/StaffDashboard.tsx';
 import { AdminDashboard } from './components/AdminDashboard.tsx';
 import { SuperAdminDashboard } from './components/SuperAdminDashboard.tsx';
+import { EventsManagement } from './components/EventsManagement.tsx';
 import { UserRole } from './types/index.ts';
 import { Building2 } from 'lucide-react';
 
 const MainContent: React.FC = () => {
   const { user, isAuthenticated, isLoading } = useAuth();
+  const [currentRoute, setCurrentRoute] = useState<AppRoute>('today');
+  const [isCollapsed, setIsCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('app_sidebar_collapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [isMobileOpen, setIsMobileOpen] = useState(false);
+
+  // Toggle desktop collapsed state and persist to localStorage
+  const handleToggleCollapse = () => {
+    setIsCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('app_sidebar_collapsed', String(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  };
+
+  // Close mobile drawer on escape key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isMobileOpen) {
+        setIsMobileOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isMobileOpen]);
+
+  // Sanitize route based on role to strictly enforce RBAC in the UI
+  useEffect(() => {
+    if (!user) return;
+
+    if (user.role === UserRole.STAFF) {
+      if (currentRoute !== 'today' && currentRoute !== 'my-attendance') {
+        setCurrentRoute('today');
+      }
+    } else if (user.role === UserRole.ADMIN) {
+      if (
+        currentRoute === 'office-networks' ||
+        currentRoute === 'governance' ||
+        currentRoute === 'my-attendance'
+      ) {
+        setCurrentRoute('today');
+      }
+    }
+  }, [user, currentRoute]);
 
   if (isLoading) {
     return (
@@ -28,18 +82,66 @@ const MainContent: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-brand-bg flex flex-col text-brand-black selection:bg-brand-yellow selection:text-brand-black">
-      <Navbar />
-      <main className="flex-1">
-        {user.role === UserRole.SUPER_ADMIN && <SuperAdminDashboard />}
-        {user.role === UserRole.ADMIN && <AdminDashboard />}
-        {user.role === UserRole.STAFF && <StaffDashboard />}
-      </main>
-      <footer className="py-6 border-t border-brand-border text-center text-xs text-brand-muted bg-white">
-        <p className="font-medium">
-          Office Access &amp; Employee Attendance Management System &bull; <span className="text-brand-black font-semibold">Enterprise Suite</span>
-        </p>
-      </footer>
+    <div className="min-h-screen bg-brand-bg flex text-brand-black selection:bg-brand-yellow selection:text-brand-black">
+      {/* Global Collapsible / Responsive Sidebar */}
+      <Sidebar
+        currentRoute={currentRoute}
+        onNavigate={setCurrentRoute}
+        isCollapsed={isCollapsed}
+        onToggleCollapse={handleToggleCollapse}
+        isMobileOpen={isMobileOpen}
+        onCloseMobile={() => setIsMobileOpen(false)}
+      />
+
+      {/* Main Content Area */}
+      <div
+        className={`flex-1 flex flex-col min-w-0 transition-all duration-300 ${
+          isCollapsed ? 'lg:pl-20' : 'lg:pl-64'
+        }`}
+      >
+        {/* Contextual Header */}
+        <Header
+          currentRoute={currentRoute}
+          onOpenMobileMenu={() => setIsMobileOpen(true)}
+        />
+
+        {/* Dynamic Page Content */}
+        <main className="flex-1 pb-10">
+          {currentRoute === 'events' ? (
+            <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
+              <EventsManagement />
+            </div>
+          ) : (
+            <>
+              {user.role === UserRole.SUPER_ADMIN && (
+                <SuperAdminDashboard
+                  currentRoute={currentRoute}
+                  onNavigate={setCurrentRoute}
+                />
+              )}
+              {user.role === UserRole.ADMIN && (
+                <AdminDashboard
+                  currentRoute={currentRoute}
+                  onNavigate={setCurrentRoute}
+                />
+              )}
+              {user.role === UserRole.STAFF && (
+                <StaffDashboard
+                  currentRoute={currentRoute}
+                  onNavigate={setCurrentRoute}
+                />
+              )}
+            </>
+          )}
+        </main>
+
+        {/* Global Footer */}
+        <footer className="py-6 border-t border-brand-border text-center text-xs text-brand-muted bg-white shrink-0">
+          <p className="font-medium">
+            Office Access &amp; Employee Attendance Management System &bull; <span className="text-brand-black font-semibold">Enterprise Suite</span>
+          </p>
+        </footer>
+      </div>
     </div>
   );
 };

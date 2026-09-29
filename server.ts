@@ -9,6 +9,8 @@ import authRoutes from './server/routes/auth.routes.ts';
 import devRoutes from './server/routes/dev.routes.ts';
 import attendanceRoutes from './server/routes/attendance.routes.ts';
 import adminRoutes from './server/routes/admin.routes.ts';
+import eventRoutes from './server/routes/event.routes.ts';
+import accessRoutes from './server/routes/access.routes.ts';
 
 dotenv.config();
 
@@ -57,6 +59,12 @@ async function startServer() {
 
   // Administrator & Staff Management API routes
   app.use('/api/admin', adminRoutes);
+
+  // Event Management & Approval API routes (Phase 6B)
+  app.use('/api/events', eventRoutes);
+
+  // Secure Access Pass & Verification API routes (Phase 6C)
+  app.use('/api/access', accessRoutes);
 
   // Global API error handler
   app.use('/api/*', (err: Error, req: Request, res: Response, _next: NextFunction) => {
