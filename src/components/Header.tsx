@@ -59,6 +59,12 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onOpenMobileMenu }
         return { section: 'People', title: 'Staff Directory & Roles' };
       case 'events':
         return { section: 'Access & Events', title: 'Event Management & Approvals' };
+      case 'reception':
+        return { section: 'Access & Reception', title: 'Reception Desk & Check-In' };
+      case 'visitors':
+        return { section: 'People', title: 'Visitor Management & Invitations' };
+      case 'my-visitors':
+        return { section: 'Access', title: 'My Visitor Access & Invitations' };
       case 'office-networks':
         return { section: 'Administration', title: 'Office Networks & Attendance Access' };
       case 'audit-logs':

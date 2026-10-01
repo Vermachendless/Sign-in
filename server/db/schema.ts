@@ -134,4 +134,76 @@ CREATE INDEX IF NOT EXISTS idx_access_passes_status ON access_passes(status);
 CREATE INDEX IF NOT EXISTS idx_access_passes_valid_until ON access_passes(valid_until);
 CREATE INDEX IF NOT EXISTS idx_access_passes_event_id ON access_passes(event_id);
 CREATE INDEX IF NOT EXISTS idx_access_passes_host_staff_id ON access_passes(host_staff_id);
+
+-- Event invitees table (Phase 6D)
+CREATE TABLE IF NOT EXISTS event_invitees (
+  id TEXT PRIMARY KEY,
+  event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  full_name TEXT NOT NULL,
+  phone TEXT,
+  email TEXT COLLATE NOCASE,
+  organization TEXT,
+  notes TEXT,
+  status TEXT NOT NULL CHECK(status IN ('INVITED', 'ACCESS_ISSUED', 'CHECKED_IN', 'CHECKED_OUT', 'CANCELLED')) DEFAULT 'INVITED',
+  access_pass_id TEXT REFERENCES access_passes(id) ON DELETE SET NULL,
+  invited_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_invitees_event_id ON event_invitees(event_id);
+CREATE INDEX IF NOT EXISTS idx_event_invitees_status ON event_invitees(status);
+CREATE INDEX IF NOT EXISTS idx_event_invitees_access_pass_id ON event_invitees(access_pass_id);
+CREATE INDEX IF NOT EXISTS idx_event_invitees_email ON event_invitees(email);
+
+-- Visitor visits table (Phase 6E)
+CREATE TABLE IF NOT EXISTS visitor_visits (
+  id TEXT PRIMARY KEY,
+  host_staff_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  visitor_full_name TEXT NOT NULL,
+  visitor_phone TEXT,
+  visitor_email TEXT COLLATE NOCASE,
+  purpose TEXT,
+  notes TEXT,
+  valid_from TEXT NOT NULL,
+  valid_until TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('PENDING', 'ACCESS_ISSUED', 'CHECKED_IN', 'CHECKED_OUT', 'CANCELLED', 'EXPIRED')) DEFAULT 'PENDING',
+  access_pass_id TEXT REFERENCES access_passes(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  cancelled_at TEXT,
+  cancelled_by TEXT REFERENCES users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_visitor_visits_host_staff_id ON visitor_visits(host_staff_id);
+CREATE INDEX IF NOT EXISTS idx_visitor_visits_status ON visitor_visits(status);
+CREATE INDEX IF NOT EXISTS idx_visitor_visits_access_pass_id ON visitor_visits(access_pass_id);
+CREATE INDEX IF NOT EXISTS idx_visitor_visits_valid_from ON visitor_visits(valid_from);
+CREATE INDEX IF NOT EXISTS idx_visitor_visits_valid_until ON visitor_visits(valid_until);
+CREATE INDEX IF NOT EXISTS idx_visitor_visits_visitor_email ON visitor_visits(visitor_email);
+
+-- Access visits / reception attendance table (Phase 6F)
+CREATE TABLE IF NOT EXISTS access_visits (
+  id TEXT PRIMARY KEY,
+  access_pass_id TEXT NOT NULL REFERENCES access_passes(id) ON DELETE CASCADE,
+  pass_type TEXT NOT NULL CHECK(pass_type IN ('EVENT', 'VISITOR')),
+  event_invitee_id TEXT REFERENCES event_invitees(id) ON DELETE SET NULL,
+  visitor_visit_id TEXT REFERENCES visitor_visits(id) ON DELETE SET NULL,
+  checked_in_at TEXT,
+  checked_in_by TEXT REFERENCES users(id),
+  checked_out_at TEXT,
+  checked_out_by TEXT REFERENCES users(id),
+  status TEXT NOT NULL CHECK(status IN ('VERIFIED', 'CHECKED_IN', 'CHECKED_OUT', 'DENIED', 'CANCELLED')),
+  denial_reason TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_access_visits_access_pass_id ON access_visits(access_pass_id);
+CREATE INDEX IF NOT EXISTS idx_access_visits_pass_type ON access_visits(pass_type);
+CREATE INDEX IF NOT EXISTS idx_access_visits_event_invitee_id ON access_visits(event_invitee_id);
+CREATE INDEX IF NOT EXISTS idx_access_visits_visitor_visit_id ON access_visits(visitor_visit_id);
+CREATE INDEX IF NOT EXISTS idx_access_visits_status ON access_visits(status);
+CREATE INDEX IF NOT EXISTS idx_access_visits_checked_in_at ON access_visits(checked_in_at);
+CREATE INDEX IF NOT EXISTS idx_access_visits_checked_out_at ON access_visits(checked_out_at);
 `;

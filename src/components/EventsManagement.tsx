@@ -20,12 +20,14 @@ import {
   AlertTriangle,
   RotateCcw,
   Ticket,
+  Users,
 } from 'lucide-react';
 import { EventBadge } from './events/EventBadge.tsx';
 import { CreateEventModal } from './events/CreateEventModal.tsx';
 import { EventDetailsModal } from './events/EventDetailsModal.tsx';
 import { SuperAdminApprovalModal } from './events/SuperAdminApprovalModal.tsx';
 import { EventAccessPassModal } from './access/EventAccessPassModal.tsx';
+import { EventInviteesModal } from './events/EventInviteesModal.tsx';
 
 export const EventsManagement: React.FC = () => {
   const { user } = useAuth();
@@ -43,6 +45,7 @@ export const EventsManagement: React.FC = () => {
   const [editingEvent, setEditingEvent] = useState<EventRecord | null>(null);
   const [viewingEvent, setViewingEvent] = useState<EventRecord | null>(null);
   const [passModalEvent, setPassModalEvent] = useState<EventRecord | null>(null);
+  const [inviteesModalEvent, setInviteesModalEvent] = useState<EventRecord | null>(null);
   const [approvalModalState, setApprovalModalState] = useState<{
     isOpen: boolean;
     event: EventRecord | null;

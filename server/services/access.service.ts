@@ -265,6 +265,141 @@ export class AccessService {
   }
 
   /**
+   * Creates a VISITOR access pass for an authorized staff member's visitor
+   */
+  public createVisitorAccessPass(
+    actor: SafeUser,
+    hostStaffId: string,
+    options: {
+      validFrom: string;
+      validUntil: string;
+      maxUses?: number | null;
+    },
+    ipAddress?: string,
+    userAgent?: string
+  ): { success: boolean; pass?: AccessPassRecord; error?: string } {
+    const db = getDatabase();
+
+    // 1. Verify host staff member exists and is active
+    const host = db.prepare('SELECT id, first_name, last_name, department, status FROM users WHERE id = ?').get(hostStaffId) as any;
+    if (!host) {
+      return { success: false, error: 'Host staff member not found.' };
+    }
+    if (host.status !== 'ACTIVE') {
+      return { success: false, error: 'Host staff member is not currently active.' };
+    }
+
+    // 2. Validate validity window
+    const nowIso = new Date().toISOString();
+    const validFrom = new Date(options.validFrom).toISOString();
+    const validUntil = new Date(options.validUntil).toISOString();
+
+    if (isNaN(new Date(validFrom).getTime()) || isNaN(new Date(validUntil).getTime())) {
+      return { success: false, error: 'Invalid start or end validity timestamps.' };
+    }
+
+    if (new Date(validUntil).getTime() <= new Date(validFrom).getTime()) {
+      return { success: false, error: 'Visitor pass valid_until must be strictly after valid_from.' };
+    }
+
+    // 3. Validate max uses (default 1 for single-use visitor pass)
+    let maxUses: number | null = 1;
+    if (options.maxUses !== undefined) {
+      if (options.maxUses === null) {
+        maxUses = null;
+      } else {
+        const parsed = parseInt(String(options.maxUses), 10);
+        if (isNaN(parsed) || parsed < 1) {
+          return { success: false, error: 'Max uses must be a positive integer or null (unlimited).' };
+        }
+        maxUses = parsed;
+      }
+    }
+
+    // 4. Generate cryptographically random token and display code (VIS-XXXX-XXXX)
+    const { rawToken, tokenHash } = this.generateAccessToken();
+
+    let displayCode = this.generateDisplayCode('VIS');
+    let attempts = 0;
+    while (attempts < 5) {
+      const existing = db.prepare('SELECT id FROM access_passes WHERE display_code = ?').get(displayCode);
+      if (!existing) break;
+      displayCode = this.generateDisplayCode('VIS');
+      attempts++;
+    }
+
+    const passId = generateId();
+    const createdAt = nowIso;
+
+    try {
+      db.prepare(`
+        INSERT INTO access_passes (
+          id, pass_type, event_id, host_staff_id, token_hash, display_code,
+          valid_from, valid_until, status, max_uses, use_count,
+          created_by, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+      `).run(
+        passId,
+        PassType.VISITOR,
+        null,
+        hostStaffId,
+        tokenHash,
+        displayCode,
+        validFrom,
+        validUntil,
+        AccessPassStatus.ACTIVE,
+        maxUses,
+        actor.id,
+        createdAt,
+        createdAt
+      );
+
+      auditService.log({
+        actorId: actor.id,
+        action: 'ACCESS_PASS_CREATED',
+        ipAddress,
+        userAgent,
+        metadata: {
+          passId,
+          passType: PassType.VISITOR,
+          hostStaffId,
+          hostStaffName: `${host.first_name} ${host.last_name}`,
+          displayCode,
+          maxUses,
+          validFrom,
+          validUntil,
+        },
+      });
+
+      const passRecord: AccessPassRecord = {
+        id: passId,
+        passType: PassType.VISITOR,
+        eventId: null,
+        hostStaffId,
+        displayCode,
+        validFrom,
+        validUntil,
+        status: AccessPassStatus.ACTIVE,
+        maxUses,
+        useCount: 0,
+        createdBy: actor.id,
+        createdAt,
+        updatedAt: createdAt,
+        rawToken,
+        hostStaffName: `${host.first_name} ${host.last_name}`,
+        creatorName: `${actor.firstName} ${actor.lastName}`,
+        formattedValidFrom: this.formatDateTime(validFrom),
+        formattedValidUntil: this.formatDateTime(validUntil),
+      };
+
+      return { success: true, pass: passRecord };
+    } catch (err) {
+      console.error('[AccessService] createVisitorAccessPass error:', err);
+      return { success: false, error: 'Database error creating visitor access pass.' };
+    }
+  }
+
+  /**
    * Retrieves an access pass by ID
    */
   public getPassById(passId: string): AccessPassRecord | null {
@@ -393,10 +528,6 @@ export class AccessService {
     ipAddress?: string,
     userAgent?: string
   ): { success: boolean; pass?: AccessPassRecord; error?: string } {
-    if (actor.role === UserRole.STAFF) {
-      return { success: false, error: 'Staff members are not authorized to revoke access passes.' };
-    }
-
     const trimmedReason = reason?.trim();
     if (!trimmedReason || trimmedReason.length < 3) {
       return { success: false, error: 'A revocation reason is required (minimum 3 characters).' };
@@ -409,12 +540,21 @@ export class AccessService {
           status: string;
           display_code: string;
           pass_type: string;
+          host_staff_id: string | null;
           created_by: string;
         }
       | undefined;
 
     if (!pass) {
       return { success: false, error: 'Access pass not found.' };
+    }
+
+    // Role check: ADMIN and SUPER_ADMIN can revoke any pass.
+    // STAFF can only revoke their own VISITOR access passes.
+    if (actor.role === UserRole.STAFF) {
+      if (pass.pass_type !== PassType.VISITOR || pass.host_staff_id !== actor.id) {
+        return { success: false, error: 'Staff members are not authorized to revoke this access pass.' };
+      }
     }
 
     if (pass.status === AccessPassStatus.REVOKED) {
@@ -753,6 +893,60 @@ export class AccessService {
       };
     }
 
+    let visitorData: {
+      id: string;
+      visitorName: string;
+      hostStaffName: string;
+      hostStaffDepartment?: string | null;
+      visitDate: string;
+      visitTime: string;
+      purpose?: string | null;
+      status: string;
+    } | null = null;
+
+    if (passRow.pass_type === PassType.VISITOR) {
+      const visit = db.prepare(`
+        SELECT vv.id, vv.visitor_full_name, vv.purpose, vv.status, vv.valid_from, vv.valid_until,
+               u.first_name as host_first_name, u.last_name as host_last_name, u.department as host_department
+        FROM visitor_visits vv
+        LEFT JOIN users u ON vv.host_staff_id = u.id
+        WHERE vv.access_pass_id = ?
+      `).get(passRow.id) as any;
+
+      if (visit) {
+        if (visit.status === 'CANCELLED') {
+          auditService.log({
+            actorId: input.actor?.id || null,
+            action: 'ACCESS_PASS_VERIFICATION_FAILED',
+            ipAddress: clientIp,
+            userAgent: input.userAgent,
+            metadata: {
+              passId: passRow.id,
+              visitId: visit.id,
+              reason: 'VISIT_CANCELLED',
+            },
+          });
+
+          return {
+            valid: false,
+            code: 'VISIT_CANCELLED',
+            message: 'The associated visitor invitation has been cancelled.',
+          };
+        }
+
+        visitorData = {
+          id: visit.id,
+          visitorName: visit.visitor_full_name,
+          hostStaffName: `${visit.host_first_name || ''} ${visit.host_last_name || ''}`.trim() || 'Staff Member',
+          hostStaffDepartment: visit.host_department || null,
+          visitDate: formatDateInTimezone(visit.valid_from),
+          visitTime: `${formatTimeInTimezone(visit.valid_from)} - ${formatTimeInTimezone(visit.valid_until)}`,
+          purpose: visit.purpose || null,
+          status: visit.status,
+        };
+      }
+    }
+
     // 8. Atomic use consumption if requested
     let finalUseCount = passRow.use_count;
     if (input.consumeUse) {
@@ -809,12 +1003,27 @@ export class AccessService {
 
     const remainingUses = passRow.max_uses !== null ? Math.max(0, passRow.max_uses - finalUseCount) : null;
 
+    // Check if pass is linked to an invitee
+    let inviteeData: { id: string; fullName: string; organization?: string | null } | null = null;
+    const inviteeRow = db.prepare('SELECT id, full_name, organization FROM event_invitees WHERE access_pass_id = ?').get(passRow.id) as
+      | { id: string; full_name: string; organization: string | null }
+      | undefined;
+    if (inviteeRow) {
+      inviteeData = {
+        id: inviteeRow.id,
+        fullName: inviteeRow.full_name,
+        organization: inviteeRow.organization,
+      };
+    }
+
     // 10. Return clean verification result
     return {
       valid: true,
       passType: passRow.pass_type,
       displayCode: passRow.display_code,
       event: eventData,
+      invitee: inviteeData,
+      visitor: visitorData,
       validFrom: passRow.valid_from,
       validUntil: passRow.valid_until,
       maxUses: passRow.max_uses,

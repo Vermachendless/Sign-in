@@ -369,6 +369,21 @@ export interface VerificationResult {
     startAt: string;
     endAt: string;
   } | null;
+  invitee?: {
+    id: string;
+    fullName: string;
+    organization?: string | null;
+  } | null;
+  visitor?: {
+    id: string;
+    visitorName: string;
+    hostStaffName: string;
+    hostStaffDepartment?: string | null;
+    visitDate: string;
+    visitTime: string;
+    purpose?: string | null;
+    status: string;
+  } | null;
   validFrom?: string;
   validUntil?: string;
   maxUses?: number | null;
@@ -376,6 +391,187 @@ export interface VerificationResult {
   remainingUses?: number | null;
 }
 
+export enum InviteeStatus {
+  INVITED = 'INVITED',
+  ACCESS_ISSUED = 'ACCESS_ISSUED',
+  CHECKED_IN = 'CHECKED_IN',
+  CHECKED_OUT = 'CHECKED_OUT',
+  CANCELLED = 'CANCELLED',
+}
 
+export interface EventInviteeRecord {
+  id: string;
+  eventId: string;
+  fullName: string;
+  phone?: string | null;
+  email?: string | null;
+  organization?: string | null;
+  notes?: string | null;
+  status: InviteeStatus;
+  accessPassId?: string | null;
+  invitedBy: string;
+  createdAt: string;
+  updatedAt: string;
+  invitedByName?: string | null;
+  accessPass?: AccessPassRecord | null;
+}
 
+export interface CreateInviteeInput {
+  fullName: string;
+  phone?: string | null;
+  email?: string | null;
+  organization?: string | null;
+  notes?: string | null;
+}
+
+export interface UpdateInviteeInput {
+  fullName?: string;
+  phone?: string | null;
+  email?: string | null;
+  organization?: string | null;
+  notes?: string | null;
+}
+
+export interface EventInviteesSummary {
+  total: number;
+  accessIssued: number;
+  cancelled: number;
+  invited: number;
+}
+
+export enum VisitorVisitStatus {
+  PENDING = 'PENDING',
+  ACCESS_ISSUED = 'ACCESS_ISSUED',
+  CHECKED_IN = 'CHECKED_IN',
+  CHECKED_OUT = 'CHECKED_OUT',
+  CANCELLED = 'CANCELLED',
+  EXPIRED = 'EXPIRED',
+}
+
+export enum AccessVisitStatus {
+  VERIFIED = 'VERIFIED',
+  CHECKED_IN = 'CHECKED_IN',
+  CHECKED_OUT = 'CHECKED_OUT',
+  DENIED = 'DENIED',
+  CANCELLED = 'CANCELLED',
+}
+
+export interface AccessVisitRecord {
+  id: string;
+  accessPassId: string;
+  passType: PassType;
+  eventInviteeId?: string | null;
+  visitorVisitId?: string | null;
+  checkedInAt?: string | null;
+  checkedInBy?: string | null;
+  checkedOutAt?: string | null;
+  checkedOutBy?: string | null;
+  status: AccessVisitStatus;
+  denialReason?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  guestName?: string;
+  guestEmail?: string | null;
+  guestPhone?: string | null;
+  guestOrganization?: string | null;
+  hostOrEventTitle?: string;
+  eventLocation?: string | null;
+  displayCode?: string;
+  checkedInByName?: string | null;
+  checkedOutByName?: string | null;
+  formattedCheckedInAt?: string;
+  formattedCheckedOutAt?: string;
+}
+
+export interface ReceptionSummaryMetrics {
+  currentlyCheckedIn: number;
+  todayVisitors: number;
+  todayEventGuests: number;
+  checkedOutToday: number;
+  accessDeniedToday: number;
+}
+
+export interface ReceptionVerificationResponse {
+  valid: boolean;
+  code?: string;
+  message?: string;
+  passId?: string;
+  passType?: PassType;
+  displayCode?: string;
+  guestName?: string;
+  organization?: string | null;
+  hostStaffName?: string | null;
+  hostStaffDepartment?: string | null;
+  eventTitle?: string | null;
+  eventLocation?: string | null;
+  visitDate?: string;
+  validFrom?: string;
+  validUntil?: string;
+  formattedValidRange?: string;
+  passStatus?: string;
+  isCheckedIn: boolean;
+  isCheckedOut: boolean;
+  canCheckIn: boolean;
+  canCheckOut: boolean;
+  activeVisitId?: string | null;
+  checkedInAt?: string | null;
+  checkedOutAt?: string | null;
+  denialReason?: string | null;
+}
+
+export interface VisitorVisitRecord {
+  id: string;
+  hostStaffId: string;
+  visitorFullName: string;
+  visitorPhone?: string | null;
+  visitorEmail?: string | null;
+  purpose?: string | null;
+  notes?: string | null;
+  validFrom: string;
+  validUntil: string;
+  status: VisitorVisitStatus;
+  accessPassId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  cancelledAt?: string | null;
+  cancelledBy?: string | null;
+  hostStaffName?: string | null;
+  hostStaffDepartment?: string | null;
+  hostStaffEmail?: string | null;
+  cancelledByName?: string | null;
+  accessPass?: AccessPassRecord | null;
+  formattedDate?: string;
+  formattedTimeRange?: string;
+}
+
+export interface CreateVisitorVisitInput {
+  visitorFullName: string;
+  visitorPhone?: string | null;
+  visitorEmail?: string | null;
+  purpose?: string | null;
+  notes?: string | null;
+  visitDate: string; // YYYY-MM-DD
+  startTime: string; // HH:mm
+  endTime: string;   // HH:mm
+}
+
+export interface UpdateVisitorVisitInput {
+  visitorFullName?: string;
+  visitorPhone?: string | null;
+  visitorEmail?: string | null;
+  purpose?: string | null;
+  notes?: string | null;
+  visitDate?: string;
+  startTime?: string;
+  endTime?: string;
+}
+
+export interface VisitorVisitsSummary {
+  total: number;
+  today: number;
+  upcoming: number;
+  accessIssued: number;
+  pending: number;
+  cancelled: number;
+}
 

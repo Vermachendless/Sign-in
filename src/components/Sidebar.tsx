@@ -22,6 +22,7 @@ import {
   MoreVertical,
   User as UserIcon,
   ShieldAlert,
+  ShieldCheck,
 } from 'lucide-react';
 
 export type AppRoute =
@@ -30,6 +31,9 @@ export type AppRoute =
   | 'my-attendance'
   | 'reports'
   | 'staff'
+  | 'visitors'
+  | 'my-visitors'
+  | 'reception'
   | 'events'
   | 'office-networks'
   | 'users-roles'
@@ -102,11 +106,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
           title: 'ACCESS',
           items: [
             {
-              id: 'visitor-access-upcoming',
+              id: 'my-visitors',
               label: 'My Visitor Access',
               icon: BadgeCheck,
-              badge: 'Phase 6C',
-              isUpcoming: true,
             },
           ],
         },
@@ -149,17 +151,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
               icon: Users,
             },
             {
-              id: 'visitors-upcoming',
+              id: 'visitors',
               label: 'Visitors',
               icon: UserRoundCheck,
-              badge: 'Phase 6C',
-              isUpcoming: true,
             },
           ],
         },
         {
           title: 'ACCESS & EVENTS',
           items: [
+            {
+              id: 'reception',
+              label: 'Reception Desk',
+              icon: ShieldCheck,
+            },
             {
               id: 'events',
               label: 'Events',
@@ -228,17 +233,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
             icon: Users,
           },
           {
-            id: 'visitors-upcoming',
+            id: 'visitors',
             label: 'Visitors',
             icon: UserRoundCheck,
-            badge: 'Phase 6C',
-            isUpcoming: true,
           },
         ],
       },
       {
         title: 'ACCESS & EVENTS',
         items: [
+          {
+            id: 'reception',
+            label: 'Reception Desk',
+            icon: ShieldCheck,
+          },
           {
             id: 'events',
             label: 'Events',
@@ -252,11 +260,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
             isUpcoming: true,
           },
           {
-            id: 'visitor-access-upcoming',
+            id: 'visitors',
             label: 'Visitor Access',
             icon: BadgeCheck,
-            badge: 'Phase 6C',
-            isUpcoming: true,
           },
         ],
       },

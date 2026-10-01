@@ -15,10 +15,12 @@ import {
   CheckCircle2,
   XCircle,
   Ticket,
+  Users,
 } from 'lucide-react';
 import { EventRecord, EventStatus, UserRole } from '../../types/index.ts';
 import { useAuth } from '../../context/AuthContext.tsx';
 import { EventBadge } from './EventBadge.tsx';
+import { EventInviteesSection } from './EventInviteesSection.tsx';
 
 interface EventDetailsModalProps {
   isOpen: boolean;
@@ -43,6 +45,7 @@ export const EventDetailsModal: React.FC<EventDetailsModalProps> = ({
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'OVERVIEW' | 'INVITEES'>('OVERVIEW');
 
   if (!isOpen || !event || !user) return null;
 
@@ -125,7 +128,7 @@ export const EventDetailsModal: React.FC<EventDetailsModalProps> = ({
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-2xl border border-brand-border max-w-xl w-full shadow-2xl overflow-hidden my-8"
+        className="bg-white rounded-2xl border border-brand-border max-w-2xl w-full shadow-2xl overflow-hidden my-8"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -146,6 +149,38 @@ export const EventDetailsModal: React.FC<EventDetailsModalProps> = ({
           </button>
         </div>
 
+        {/* Tab Navigation */}
+        <div className="flex items-center gap-1 px-6 border-b border-brand-border bg-neutral-50/50">
+          <button
+            id="tab-event-overview"
+            onClick={() => setActiveTab('OVERVIEW')}
+            className={`px-4 py-2.5 text-xs font-bold border-b-2 flex items-center gap-2 transition cursor-pointer ${
+              activeTab === 'OVERVIEW'
+                ? 'border-brand-black text-brand-black'
+                : 'border-transparent text-neutral-500 hover:text-brand-black'
+            }`}
+          >
+            <CalendarDays className="w-3.5 h-3.5" />
+            <span>Overview &amp; Schedule</span>
+          </button>
+
+          <button
+            id="tab-event-invitees"
+            onClick={() => setActiveTab('INVITEES')}
+            className={`px-4 py-2.5 text-xs font-bold border-b-2 flex items-center gap-2 transition cursor-pointer ${
+              activeTab === 'INVITEES'
+                ? 'border-brand-black text-brand-black'
+                : 'border-transparent text-neutral-500 hover:text-brand-black'
+            }`}
+          >
+            <Users className="w-3.5 h-3.5" />
+            <span>Invitees &amp; Access</span>
+            {event.status === EventStatus.APPROVED && (
+              <span className="w-2 h-2 rounded-full bg-emerald-500" />
+            )}
+          </button>
+        </div>
+
         {/* Notices */}
         {error && (
           <div className="mx-6 mt-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-2">
@@ -163,111 +198,117 @@ export const EventDetailsModal: React.FC<EventDetailsModalProps> = ({
 
         {/* Body */}
         <div className="p-6 space-y-5 text-xs">
-          {/* Rejection Banner */}
-          {event.status === EventStatus.REJECTED && event.rejectionReason && (
-            <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 space-y-1">
-              <span className="font-bold flex items-center gap-1.5 text-xs">
-                <XCircle className="w-4 h-4 text-rose-600" /> Rejection Notice
-              </span>
-              <p className="text-xs text-rose-800 italic">
-                &ldquo;{event.rejectionReason}&rdquo;
-              </p>
-              {event.approvedAt && (
-                <p className="text-[10px] text-rose-600">
-                  Reviewed on: {event.approvedAt}
-                </p>
-              )}
-            </div>
-          )}
-
-          {/* Pending Approval Notice for Admin */}
-          {event.status === EventStatus.PENDING_APPROVAL && !isSuperAdmin && (
-            <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 flex items-start gap-2.5">
-              <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-              <div>
-                <span className="font-bold block">Awaiting Super Admin Approval</span>
-                <p className="text-[11px] text-amber-800 mt-0.5">
-                  This event is currently locked under root governance review. You can withdraw the event to make edits if needed.
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* Schedule & Location Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-            <div className="p-3.5 rounded-xl bg-brand-bg border border-brand-border">
-              <span className="text-brand-muted font-medium text-[11px] flex items-center gap-1.5 mb-1">
-                <MapPin className="w-3.5 h-3.5 text-brand-yellow" /> Location
-              </span>
-              <span className="font-semibold text-brand-black text-sm block">
-                {event.location}
-              </span>
-            </div>
-
-            <div className="p-3.5 rounded-xl bg-brand-bg border border-brand-border">
-              <span className="text-brand-muted font-medium text-[11px] flex items-center gap-1.5 mb-1">
-                <Clock className="w-3.5 h-3.5 text-brand-yellow" /> Company Timezone
-              </span>
-              <span className="font-semibold text-brand-black text-sm block">
-                Africa/Lagos (GMT+1)
-              </span>
-            </div>
-
-            <div className="p-3.5 rounded-xl bg-brand-bg border border-brand-border sm:col-span-2">
-              <span className="text-brand-muted font-medium text-[11px] flex items-center gap-1.5 mb-1">
-                <CalendarDays className="w-3.5 h-3.5 text-brand-yellow" /> Event Schedule
-              </span>
-              <div className="space-y-0.5">
-                <div className="font-mono text-xs text-brand-black">
-                  <strong>Start:</strong> {event.formattedStart || event.startAt}
-                </div>
-                <div className="font-mono text-xs text-brand-black">
-                  <strong>End:</strong> {event.formattedEnd || event.endAt}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Description */}
-          {event.description && (
-            <div className="p-3.5 rounded-xl bg-brand-bg border border-brand-border">
-              <span className="text-brand-muted font-medium text-[11px] block mb-1">
-                Event Description &amp; Notes
-              </span>
-              <p className="text-xs text-brand-black whitespace-pre-line leading-relaxed">
-                {event.description}
-              </p>
-            </div>
-          )}
-
-          {/* Ownership & Approval Metadata */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-2 border-t border-brand-border">
-            <div>
-              <span className="text-brand-muted block text-[11px]">Created By</span>
-              <span className="font-semibold text-brand-black">
-                {event.creatorName || event.creatorEmail}
-              </span>
-              <span className="text-[10px] text-brand-muted block mt-0.5">
-                {event.createdAt ? new Date(event.createdAt).toLocaleDateString() : '--'}
-              </span>
-            </div>
-
-            {event.approvedBy && (
-              <div>
-                <span className="text-brand-muted block text-[11px]">
-                  {event.status === EventStatus.REJECTED ? 'Reviewed By' : 'Approved By'}
-                </span>
-                <span className="font-semibold text-brand-black">
-                  {event.approverName || event.approverEmail}
-                </span>
-                {event.approvedAt && (
-                  <span className="text-[10px] text-brand-muted block mt-0.5">
-                    {new Date(event.approvedAt).toLocaleString()}
+          {activeTab === 'OVERVIEW' ? (
+            <>
+              {/* Rejection Banner */}
+              {event.status === EventStatus.REJECTED && event.rejectionReason && (
+                <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 space-y-1">
+                  <span className="font-bold flex items-center gap-1.5 text-xs">
+                    <XCircle className="w-4 h-4 text-rose-600" /> Rejection Notice
                   </span>
+                  <p className="text-xs text-rose-800 italic">
+                    &ldquo;{event.rejectionReason}&rdquo;
+                  </p>
+                  {event.approvedAt && (
+                    <p className="text-[10px] text-rose-600">
+                      Reviewed on: {event.approvedAt}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Pending Approval Notice for Admin */}
+              {event.status === EventStatus.PENDING_APPROVAL && !isSuperAdmin && (
+                <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 flex items-start gap-2.5">
+                  <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-bold block">Awaiting Super Admin Approval</span>
+                    <p className="text-[11px] text-amber-800 mt-0.5">
+                      This event is currently locked under root governance review. You can withdraw the event to make edits if needed.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Schedule & Location Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                <div className="p-3.5 rounded-xl bg-brand-bg border border-brand-border">
+                  <span className="text-brand-muted font-medium text-[11px] flex items-center gap-1.5 mb-1">
+                    <MapPin className="w-3.5 h-3.5 text-brand-yellow" /> Location
+                  </span>
+                  <span className="font-semibold text-brand-black text-sm block">
+                    {event.location}
+                  </span>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-brand-bg border border-brand-border">
+                  <span className="text-brand-muted font-medium text-[11px] flex items-center gap-1.5 mb-1">
+                    <Clock className="w-3.5 h-3.5 text-brand-yellow" /> Company Timezone
+                  </span>
+                  <span className="font-semibold text-brand-black text-sm block">
+                    Africa/Lagos (GMT+1)
+                  </span>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-brand-bg border border-brand-border sm:col-span-2">
+                  <span className="text-brand-muted font-medium text-[11px] flex items-center gap-1.5 mb-1">
+                    <CalendarDays className="w-3.5 h-3.5 text-brand-yellow" /> Event Schedule
+                  </span>
+                  <div className="space-y-0.5">
+                    <div className="font-mono text-xs text-brand-black">
+                      <strong>Start:</strong> {event.formattedStart || event.startAt}
+                    </div>
+                    <div className="font-mono text-xs text-brand-black">
+                      <strong>End:</strong> {event.formattedEnd || event.endAt}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Description */}
+              {event.description && (
+                <div className="p-3.5 rounded-xl bg-brand-bg border border-brand-border">
+                  <span className="text-brand-muted font-medium text-[11px] block mb-1">
+                    Event Description &amp; Notes
+                  </span>
+                  <p className="text-xs text-brand-black whitespace-pre-line leading-relaxed">
+                    {event.description}
+                  </p>
+                </div>
+              )}
+
+              {/* Ownership & Approval Metadata */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-2 border-t border-brand-border">
+                <div>
+                  <span className="text-brand-muted block text-[11px]">Created By</span>
+                  <span className="font-semibold text-brand-black">
+                    {event.creatorName || event.creatorEmail}
+                  </span>
+                  <span className="text-[10px] text-brand-muted block mt-0.5">
+                    {event.createdAt ? new Date(event.createdAt).toLocaleDateString() : '--'}
+                  </span>
+                </div>
+
+                {event.approvedBy && (
+                  <div>
+                    <span className="text-brand-muted block text-[11px]">
+                      {event.status === EventStatus.REJECTED ? 'Reviewed By' : 'Approved By'}
+                    </span>
+                    <span className="font-semibold text-brand-black">
+                      {event.approverName || event.approverEmail}
+                    </span>
+                    {event.approvedAt && (
+                      <span className="text-[10px] text-brand-muted block mt-0.5">
+                        {new Date(event.approvedAt).toLocaleString()}
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
-            )}
-          </div>
+            </>
+          ) : (
+            <EventInviteesSection event={event} />
+          )}
         </div>
 
         {/* Action Controls Footer */}
@@ -369,6 +410,17 @@ export const EventDetailsModal: React.FC<EventDetailsModalProps> = ({
             )}
 
             {/* APPROVED Actions */}
+            {event.status === EventStatus.APPROVED && activeTab === 'OVERVIEW' && (
+              <button
+                id="event-detail-switch-invitees-btn"
+                onClick={() => setActiveTab('INVITEES')}
+                className="px-3.5 py-2 rounded-xl text-xs font-semibold text-brand-black bg-white hover:bg-neutral-100 border border-brand-border transition cursor-pointer flex items-center gap-1.5"
+              >
+                <Users className="w-3.5 h-3.5 text-amber-500" />
+                <span>Invitees &amp; Guests</span>
+              </button>
+            )}
+
             {event.status === EventStatus.APPROVED && onManagePasses && (
               <button
                 id="event-detail-access-passes-btn"

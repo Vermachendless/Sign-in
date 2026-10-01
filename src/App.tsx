@@ -7,6 +7,8 @@ import { StaffDashboard } from './components/StaffDashboard.tsx';
 import { AdminDashboard } from './components/AdminDashboard.tsx';
 import { SuperAdminDashboard } from './components/SuperAdminDashboard.tsx';
 import { EventsManagement } from './components/EventsManagement.tsx';
+import { VisitorsManagement } from './components/visitors/VisitorsManagement.tsx';
+import { ReceptionDashboard } from './components/reception/ReceptionDashboard.tsx';
 import { UserRole } from './types/index.ts';
 import { Building2 } from 'lucide-react';
 
@@ -51,14 +53,15 @@ const MainContent: React.FC = () => {
     if (!user) return;
 
     if (user.role === UserRole.STAFF) {
-      if (currentRoute !== 'today' && currentRoute !== 'my-attendance') {
+      if (currentRoute !== 'today' && currentRoute !== 'my-attendance' && currentRoute !== 'my-visitors') {
         setCurrentRoute('today');
       }
     } else if (user.role === UserRole.ADMIN) {
       if (
         currentRoute === 'office-networks' ||
         currentRoute === 'governance' ||
-        currentRoute === 'my-attendance'
+        currentRoute === 'my-attendance' ||
+        currentRoute === 'my-visitors'
       ) {
         setCurrentRoute('today');
       }
@@ -111,6 +114,34 @@ const MainContent: React.FC = () => {
             <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
               <EventsManagement />
             </div>
+          ) : currentRoute === 'visitors' || currentRoute === 'my-visitors' ? (
+            <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
+              <VisitorsManagement isStaffView={user.role === UserRole.STAFF} />
+            </div>
+          ) : currentRoute === 'reception' ? (
+            user.role === UserRole.STAFF ? (
+              <div className="max-w-4xl mx-auto px-4 sm:px-6 py-12 text-center">
+                <div className="p-8 bg-white rounded-2xl border border-rose-200 shadow-sm max-w-md mx-auto">
+                  <div className="w-12 h-12 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center mx-auto mb-4 font-bold text-lg">
+                    403
+                  </div>
+                  <h2 className="text-lg font-bold text-slate-900 mb-2">Access Restricted</h2>
+                  <p className="text-xs text-slate-500 mb-6">
+                    Reception and physical check-in operations are strictly restricted to administrative personnel.
+                  </p>
+                  <button
+                    onClick={() => setCurrentRoute('my-attendance')}
+                    className="px-4 py-2 bg-slate-900 text-white text-xs font-semibold rounded-xl hover:bg-slate-800 transition"
+                  >
+                    Return to Dashboard
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
+                <ReceptionDashboard />
+              </div>
+            )
           ) : (
             <>
               {user.role === UserRole.SUPER_ADMIN && (

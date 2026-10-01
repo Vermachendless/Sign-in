@@ -11,6 +11,8 @@ import attendanceRoutes from './server/routes/attendance.routes.ts';
 import adminRoutes from './server/routes/admin.routes.ts';
 import eventRoutes from './server/routes/event.routes.ts';
 import accessRoutes from './server/routes/access.routes.ts';
+import visitorRoutes from './server/routes/visitor.routes.ts';
+import receptionRoutes from './server/routes/reception.routes.ts';
 
 dotenv.config();
 
@@ -65,6 +67,12 @@ async function startServer() {
 
   // Secure Access Pass & Verification API routes (Phase 6C)
   app.use('/api/access', accessRoutes);
+
+  // Staff Visitor Access & Visitor Invitations API routes (Phase 6E)
+  app.use('/api/visitor-visits', visitorRoutes);
+
+  // Reception Access Verification & Check-In / Check-Out API routes (Phase 6F)
+  app.use('/api/reception', receptionRoutes);
 
   // Global API error handler
   app.use('/api/*', (err: Error, req: Request, res: Response, _next: NextFunction) => {
