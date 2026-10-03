@@ -474,6 +474,9 @@ export interface AccessVisitRecord {
   guestEmail?: string | null;
   guestPhone?: string | null;
   guestOrganization?: string | null;
+  purpose?: string | null;
+  hostStaffName?: string | null;
+  eventTitle?: string | null;
   hostOrEventTitle?: string;
   eventLocation?: string | null;
   displayCode?: string;

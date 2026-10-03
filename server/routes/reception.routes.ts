@@ -134,7 +134,7 @@ router.post('/check-out', (req: AuthenticatedRequest, res: Response) => {
 router.get('/active', (req: AuthenticatedRequest, res: Response) => {
   try {
     const actor = req.user!;
-    const search = typeof req.query.search === 'string' ? req.query.search : undefined;
+    const search = typeof req.query.search === 'string' ? req.query.search.trim().slice(0, 100) : undefined;
 
     const result = receptionService.listActive(actor, { search });
 
@@ -163,14 +163,18 @@ router.get('/history', (req: AuthenticatedRequest, res: Response) => {
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string, 10) || 20));
     const status = typeof req.query.status === 'string' ? req.query.status : undefined;
     const passType = typeof req.query.passType === 'string' ? req.query.passType : undefined;
-    const search = typeof req.query.search === 'string' ? req.query.search : undefined;
+    const search = typeof req.query.search === 'string' ? req.query.search.trim().slice(0, 100) : undefined;
     const date = typeof req.query.date === 'string' ? req.query.date : undefined;
+    const startDate = typeof req.query.startDate === 'string' ? req.query.startDate : undefined;
+    const endDate = typeof req.query.endDate === 'string' ? req.query.endDate : undefined;
 
     const result = receptionService.listHistory(actor, {
       search,
       status,
       passType,
       date,
+      startDate,
+      endDate,
       page,
       limit,
     });

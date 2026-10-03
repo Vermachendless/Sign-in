@@ -62,6 +62,22 @@ router.post('/check-in', requireAuth, requireStaff, (req: AuthenticatedRequest, 
       );
     }
 
+    if (!networkVerification.isOfficeNetwork && isSuperAdmin) {
+      // Audit log the Super Admin network bypass
+      auditService.log({
+        actorId: staffId,
+        action: 'SUPER_ADMIN_NETWORK_BYPASS',
+        targetUserId: staffId,
+        ipAddress: networkVerification.detectedIp,
+        userAgent,
+        metadata: {
+          action: 'CHECK_IN',
+          maskedDetectedIp: networkVerification.maskedDetectedIp,
+          reason: 'SUPER_ADMIN_PRIVILEGE_BYPASS',
+        },
+      });
+    }
+
     // 2. Execute attendance check-in
     const result = attendanceService.checkIn({
       staffId,
@@ -130,6 +146,22 @@ router.post('/check-out', requireAuth, requireStaff, (req: AuthenticatedRequest,
         ApiErrorCode.OFFICE_ACCESS_REQUIRED,
         'Attendance actions are only available from an authorized office network.'
       );
+    }
+
+    if (!networkVerification.isOfficeNetwork && isSuperAdmin) {
+      // Audit log the Super Admin network bypass
+      auditService.log({
+        actorId: staffId,
+        action: 'SUPER_ADMIN_NETWORK_BYPASS',
+        targetUserId: staffId,
+        ipAddress: networkVerification.detectedIp,
+        userAgent,
+        metadata: {
+          action: 'CHECK_OUT',
+          maskedDetectedIp: networkVerification.maskedDetectedIp,
+          reason: 'SUPER_ADMIN_PRIVILEGE_BYPASS',
+        },
+      });
     }
 
     // 2. Execute attendance check-out

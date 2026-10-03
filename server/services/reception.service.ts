@@ -853,6 +853,9 @@ export class ReceptionService {
         COALESCE(ei.email, vv.visitor_email) as guestEmail,
         COALESCE(ei.phone, vv.visitor_phone) as guestPhone,
         ei.organization as guestOrganization,
+        vv.purpose as purpose,
+        (hu.first_name || ' ' || hu.last_name) as hostStaffName,
+        e.title as eventTitle,
         COALESCE(e.title, (hu.first_name || ' ' || hu.last_name), 'Reception') as hostOrEventTitle,
         e.location as eventLocation,
         (cu.first_name || ' ' || cu.last_name) as checkedInByName
@@ -868,7 +871,8 @@ export class ReceptionService {
 
     const params: string[] = [];
     if (options?.search?.trim()) {
-      const q = `%${options.search.trim()}%`;
+      const sanitizedSearch = options.search.trim().slice(0, 100);
+      const q = `%${sanitizedSearch}%`;
       sql += `
         AND (
           ei.full_name LIKE ? OR
@@ -909,6 +913,8 @@ export class ReceptionService {
       status?: string;
       passType?: string;
       date?: string;
+      startDate?: string;
+      endDate?: string;
       page?: number;
       limit?: number;
     }
@@ -938,6 +944,91 @@ export class ReceptionService {
     const limit = Math.min(100, Math.max(1, options?.limit || 20));
     const offset = (page - 1) * limit;
 
+    // Special handling for status === 'DENIED': Query authoritative audit logs for ACCESS_DENIED
+    if (options?.status === 'DENIED') {
+      let auditWhere = "WHERE al.action = 'ACCESS_DENIED'";
+      const auditParams: (string | number)[] = [];
+
+      if (options?.startDate && options?.endDate) {
+        auditWhere += " AND DATE(al.created_at, '+1 hour') >= ? AND DATE(al.created_at, '+1 hour') <= ?";
+        auditParams.push(options.startDate, options.endDate);
+      } else if (options?.startDate) {
+        auditWhere += " AND DATE(al.created_at, '+1 hour') >= ?";
+        auditParams.push(options.startDate);
+      } else if (options?.endDate) {
+        auditWhere += " AND DATE(al.created_at, '+1 hour') <= ?";
+        auditParams.push(options.endDate);
+      } else if (options?.date) {
+        auditWhere += " AND DATE(al.created_at, '+1 hour') = ?";
+        auditParams.push(options.date);
+      }
+
+      if (options?.search?.trim()) {
+        const sanitizedSearch = options.search.trim().slice(0, 100);
+        const q = `%${sanitizedSearch}%`;
+        auditWhere += `
+          AND (
+            al.metadata LIKE ? OR
+            u.first_name LIKE ? OR
+            u.last_name LIKE ?
+          )
+        `;
+        auditParams.push(q, q, q);
+      }
+
+      const countSql = `
+        SELECT COUNT(*) as total
+        FROM audit_logs al
+        LEFT JOIN users u ON al.actor_id = u.id
+        ${auditWhere}
+      `;
+      const countRow = db.prepare(countSql).get(...auditParams) as any;
+      const total = Number(countRow?.total || 0);
+
+      const dataSql = `
+        SELECT 
+          al.id,
+          al.created_at as createdAt,
+          al.actor_id as actorId,
+          al.metadata,
+          (u.first_name || ' ' || u.last_name) as checkedInByName
+        FROM audit_logs al
+        LEFT JOIN users u ON al.actor_id = u.id
+        ${auditWhere}
+        ORDER BY al.created_at DESC
+        LIMIT ? OFFSET ?
+      `;
+      const rows = db.prepare(dataSql).all(...auditParams, limit, offset) as any[];
+
+      const visits: AccessVisitRecord[] = rows.map((r) => {
+        let meta: any = {};
+        try {
+          meta = JSON.parse(r.metadata || '{}');
+        } catch {}
+        return {
+          id: r.id,
+          accessPassId: meta.passId || 'none',
+          passType: (meta.passType as PassType) || PassType.VISITOR,
+          status: AccessVisitStatus.DENIED,
+          denialReason: meta.message || meta.reason || 'Access denied',
+          displayCode: meta.displayCode || meta.code || '—',
+          guestName: meta.guestName || 'Access Attempt',
+          checkedInByName: r.checkedInByName || 'Desk Operator',
+          createdAt: r.createdAt,
+          updatedAt: r.createdAt,
+          formattedCheckedInAt: `${formatDateInTimezone(r.createdAt)} ${formatTimeInTimezone(r.createdAt)}`,
+        };
+      });
+
+      return {
+        success: true,
+        visits,
+        total,
+        page,
+        limit,
+      };
+    }
+
     let whereClause = 'WHERE 1=1';
     const params: (string | number)[] = [];
 
@@ -951,13 +1042,23 @@ export class ReceptionService {
       params.push(options.passType);
     }
 
-    if (options?.date) {
+    if (options?.startDate && options?.endDate) {
+      whereClause += " AND DATE(av.created_at, '+1 hour') >= ? AND DATE(av.created_at, '+1 hour') <= ?";
+      params.push(options.startDate, options.endDate);
+    } else if (options?.startDate) {
+      whereClause += " AND DATE(av.created_at, '+1 hour') >= ?";
+      params.push(options.startDate);
+    } else if (options?.endDate) {
+      whereClause += " AND DATE(av.created_at, '+1 hour') <= ?";
+      params.push(options.endDate);
+    } else if (options?.date) {
       whereClause += " AND DATE(av.created_at, '+1 hour') = ?";
       params.push(options.date);
     }
 
     if (options?.search?.trim()) {
-      const q = `%${options.search.trim()}%`;
+      const sanitizedSearch = options.search.trim().slice(0, 100);
+      const q = `%${sanitizedSearch}%`;
       whereClause += `
         AND (
           ei.full_name LIKE ? OR
@@ -1005,6 +1106,9 @@ export class ReceptionService {
         COALESCE(ei.email, vv.visitor_email) as guestEmail,
         COALESCE(ei.phone, vv.visitor_phone) as guestPhone,
         ei.organization as guestOrganization,
+        vv.purpose as purpose,
+        (hu.first_name || ' ' || hu.last_name) as hostStaffName,
+        e.title as eventTitle,
         COALESCE(e.title, (hu.first_name || ' ' || hu.last_name), 'Reception') as hostOrEventTitle,
         e.location as eventLocation,
         (cu.first_name || ' ' || cu.last_name) as checkedInByName,
@@ -1142,6 +1246,9 @@ export class ReceptionService {
         COALESCE(ei.email, vv.visitor_email) as guestEmail,
         COALESCE(ei.phone, vv.visitor_phone) as guestPhone,
         ei.organization as guestOrganization,
+        vv.purpose as purpose,
+        (hu.first_name || ' ' || hu.last_name) as hostStaffName,
+        e.title as eventTitle,
         COALESCE(e.title, (hu.first_name || ' ' || hu.last_name), 'Reception') as hostOrEventTitle,
         e.location as eventLocation,
         (cu.first_name || ' ' || cu.last_name) as checkedInByName,
