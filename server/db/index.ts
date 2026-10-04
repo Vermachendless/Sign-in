@@ -18,10 +18,11 @@ export function getDatabase(): DatabaseSync {
   const dbPath = process.env.DATABASE_PATH || path.join(dbDir, 'attendance.db');
   dbInstance = new DatabaseSync(dbPath);
 
-  // Enable foreign keys and Write-Ahead Logging (WAL) for concurrency & durability
+  // Enable foreign keys, Write-Ahead Logging (WAL), and busy_timeout for concurrency & durability
   dbInstance.exec('PRAGMA foreign_keys = ON;');
   dbInstance.exec('PRAGMA journal_mode = WAL;');
   dbInstance.exec('PRAGMA synchronous = NORMAL;');
+  dbInstance.exec('PRAGMA busy_timeout = 5000;');
 
   // Run schema migration
   dbInstance.exec(DB_SCHEMA_SQL);

@@ -8,6 +8,7 @@ import {
   removeApprovedOfficeIp,
   extractClientIp,
 } from '../services/network.service.ts';
+import { backupService } from '../services/backup.service.ts';
 import reportRoutes from './report.routes.ts';
 import { sendSuccess, sendError, ApiErrorCode } from '../utils/apiResponse.ts';
 import { UserRole, UserStatus } from '../../src/types/index.ts';
@@ -416,6 +417,50 @@ router.post('/office-network/remove', requireSuperAdmin, (req: AuthenticatedRequ
   } catch (error) {
     console.error('[AdminRoutes] removeOfficeIp error:', error);
     return sendError(res, 500, ApiErrorCode.INTERNAL_ERROR, 'Failed to remove approved office IP.');
+  }
+});
+
+/**
+ * POST /api/admin/backups
+ * Super Admin only: Trigger atomic, consistent point-in-time database backup
+ */
+router.post('/backups', requireSuperAdmin, (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const actor = req.user!;
+    const { ip: clientIp } = extractClientIp(req);
+    const userAgent = req.headers['user-agent'] || 'Unknown';
+
+    const result = backupService.createBackup(actor, clientIp, userAgent);
+
+    if (!result.success) {
+      return sendError(res, 500, ApiErrorCode.INTERNAL_ERROR, result.error || 'Failed to create database backup.');
+    }
+
+    return sendSuccess(res, {
+      filename: result.filename,
+      fileSizeBytes: result.fileSizeBytes,
+      tableCounts: result.tableCounts,
+      checksumVerified: result.checksumVerified,
+      message: 'Database backup created and verified successfully.',
+    }, 201);
+  } catch (error) {
+    console.error('[AdminRoutes] createBackup error:', error);
+    return sendError(res, 500, ApiErrorCode.INTERNAL_ERROR, 'An error occurred during database backup.');
+  }
+});
+
+/**
+ * GET /api/admin/backups
+ * Super Admin only: List verified backups metadata (does not expose raw files)
+ */
+router.get('/backups', requireSuperAdmin, (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const actor = req.user!;
+    const backups = backupService.listBackups(actor);
+    return sendSuccess(res, { backups });
+  } catch (error) {
+    console.error('[AdminRoutes] listBackups error:', error);
+    return sendError(res, 500, ApiErrorCode.INTERNAL_ERROR, 'Failed to list database backups.');
   }
 });
 

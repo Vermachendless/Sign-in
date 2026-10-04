@@ -155,65 +155,67 @@ export const Login: React.FC = () => {
             </button>
           </form>
 
-          {/* Quick Demo Test Accounts */}
-          <div className="mt-8 pt-6 border-t border-brand-border">
-            <p className="text-xs font-semibold text-brand-muted uppercase tracking-wider mb-3 text-center">
-              Quick Test Accounts
-            </p>
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <button
-                type="button"
-                id="demo-superadmin-btn"
-                onClick={() => handleQuickFill('admin@example.com', 'AdminSecurePassword123!')}
-                className="p-2.5 text-left rounded-xl bg-purple-50/70 hover:bg-purple-100/90 border border-purple-200 text-purple-900 transition cursor-pointer"
-              >
-                <div className="font-semibold text-purple-950 flex items-center gap-1">
-                  <span className="w-2 h-2 rounded-full bg-purple-600 inline-block" />
-                  Super Admin
-                </div>
-                <div className="text-[11px] text-purple-700 truncate">admin@example.com</div>
-              </button>
+          {/* Quick Demo Test Accounts (Development Only) */}
+          {import.meta.env.DEV && (
+            <div className="mt-8 pt-6 border-t border-brand-border">
+              <p className="text-xs font-semibold text-brand-muted uppercase tracking-wider mb-3 text-center">
+                Quick Test Accounts (Development Mode)
+              </p>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <button
+                  type="button"
+                  id="demo-superadmin-btn"
+                  onClick={() => handleQuickFill('admin@example.com', 'AdminSecurePassword123!')}
+                  className="p-2.5 text-left rounded-xl bg-purple-50/70 hover:bg-purple-100/90 border border-purple-200 text-purple-900 transition cursor-pointer"
+                >
+                  <div className="font-semibold text-purple-950 flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-purple-600 inline-block" />
+                    Super Admin
+                  </div>
+                  <div className="text-[11px] text-purple-700 truncate">admin@example.com</div>
+                </button>
 
-              <button
-                type="button"
-                id="demo-admin-btn"
-                onClick={() => handleQuickFill('manager@example.com', 'ManagerSecure123!')}
-                className="p-2.5 text-left rounded-xl bg-amber-50/70 hover:bg-amber-100/90 border border-brand-yellow/50 text-amber-950 transition cursor-pointer"
-              >
-                <div className="font-semibold text-brand-black flex items-center gap-1">
-                  <span className="w-2 h-2 rounded-full bg-brand-yellow inline-block" />
-                  Admin
-                </div>
-                <div className="text-[11px] text-amber-800 truncate">manager@example.com</div>
-              </button>
+                <button
+                  type="button"
+                  id="demo-admin-btn"
+                  onClick={() => handleQuickFill('manager@example.com', 'ManagerSecure123!')}
+                  className="p-2.5 text-left rounded-xl bg-amber-50/70 hover:bg-amber-100/90 border border-brand-yellow/50 text-amber-950 transition cursor-pointer"
+                >
+                  <div className="font-semibold text-brand-black flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-brand-yellow inline-block" />
+                    Admin
+                  </div>
+                  <div className="text-[11px] text-amber-800 truncate">manager@example.com</div>
+                </button>
 
-              <button
-                type="button"
-                id="demo-staff-btn"
-                onClick={() => handleQuickFill('john.doe@example.com', 'StaffSecure123!')}
-                className="p-2.5 text-left rounded-xl bg-emerald-50/70 hover:bg-emerald-100/90 border border-emerald-200 text-emerald-900 transition cursor-pointer"
-              >
-                <div className="font-semibold text-emerald-950 flex items-center gap-1">
-                  <span className="w-2 h-2 rounded-full bg-emerald-600 inline-block" />
-                  Staff (Active)
-                </div>
-                <div className="text-[11px] text-emerald-700 truncate">john.doe@example.com</div>
-              </button>
+                <button
+                  type="button"
+                  id="demo-staff-btn"
+                  onClick={() => handleQuickFill('john.doe@example.com', 'StaffSecure123!')}
+                  className="p-2.5 text-left rounded-xl bg-emerald-50/70 hover:bg-emerald-100/90 border border-emerald-200 text-emerald-900 transition cursor-pointer"
+                >
+                  <div className="font-semibold text-emerald-950 flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-emerald-600 inline-block" />
+                    Staff (Active)
+                  </div>
+                  <div className="text-[11px] text-emerald-700 truncate">john.doe@example.com</div>
+                </button>
 
-              <button
-                type="button"
-                id="demo-suspended-btn"
-                onClick={() => handleQuickFill('suspended.user@example.com', 'SuspendedPass123!')}
-                className="p-2.5 text-left rounded-xl bg-rose-50/70 hover:bg-rose-100/90 border border-rose-200 text-rose-900 transition cursor-pointer"
-              >
-                <div className="font-semibold text-rose-950 flex items-center gap-1">
-                  <span className="w-2 h-2 rounded-full bg-rose-600 inline-block" />
-                  Staff (Suspended)
-                </div>
-                <div className="text-[11px] text-rose-700 truncate">suspended.user@example.com</div>
-              </button>
+                <button
+                  type="button"
+                  id="demo-suspended-btn"
+                  onClick={() => handleQuickFill('suspended.user@example.com', 'SuspendedPass123!')}
+                  className="p-2.5 text-left rounded-xl bg-rose-50/70 hover:bg-rose-100/90 border border-rose-200 text-rose-900 transition cursor-pointer"
+                >
+                  <div className="font-semibold text-rose-950 flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-rose-600 inline-block" />
+                    Staff (Suspended)
+                  </div>
+                  <div className="text-[11px] text-rose-700 truncate">suspended.user@example.com</div>
+                </button>
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         <div className="mt-4 text-center text-xs text-brand-muted">

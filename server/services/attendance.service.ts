@@ -258,7 +258,7 @@ class AttendanceService {
     const verificationMethod = params.verificationMethod || VerificationMethod.OFFICE_IP;
 
     try {
-      db.prepare(`
+      const updateRes = db.prepare(`
         UPDATE attendance
         SET check_out = ?,
             check_out_ip = ?,
@@ -266,7 +266,7 @@ class AttendanceService {
             check_out_verification_method = ?,
             status = ?,
             updated_at = ?
-        WHERE id = ?
+        WHERE id = ? AND check_out IS NULL
       `).run(
         nowIso,
         params.clientIp,
@@ -276,6 +276,14 @@ class AttendanceService {
         nowIso,
         existing.id
       );
+
+      if (updateRes.changes === 0) {
+        return {
+          success: false,
+          errorCode: ApiErrorCode.ALREADY_CHECKED_OUT,
+          errorMessage: 'You have already checked out today.',
+        };
+      }
 
       // Record immutable audit log
       auditService.log({

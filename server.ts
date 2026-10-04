@@ -2,7 +2,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import cookieParser from 'cookie-parser';
 import path from 'node:path';
 import dotenv from 'dotenv';
-import { getDatabase } from './server/db/index.ts';
+import { getDatabase, closeDatabase } from './server/db/index.ts';
 import { seedDatabase } from './server/db/seed.ts';
 import { securityHeaders } from './server/middleware/security.ts';
 import authRoutes from './server/routes/auth.routes.ts';
@@ -100,9 +100,29 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, HOST, () => {
+  const server = app.listen(PORT, HOST, () => {
     console.log(`[Server] Running on http://${HOST}:${PORT}`);
   });
+
+  // Graceful shutdown handling for container termination (Cloud Run / Docker)
+  const shutdown = (signal: string) => {
+    console.log(`[Server] Received ${signal}. Starting graceful shutdown...`);
+    server.close(() => {
+      console.log('[Server] HTTP server closed. Closing database connections...');
+      closeDatabase();
+      console.log('[Server] Database closed cleanly. Exiting process.');
+      process.exit(0);
+    });
+
+    // Force exit if not closed within 10 seconds
+    setTimeout(() => {
+      console.error('[Server] Graceful shutdown timed out. Forcing termination.');
+      process.exit(1);
+    }, 10000).unref();
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
 startServer().catch((error) => {
