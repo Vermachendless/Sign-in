@@ -69,14 +69,14 @@ router.post('/login', authRateLimiter, async (req: AuthenticatedRequest, res: Re
  * POST /api/auth/logout
  * Invalidate current session and clear cookie
  */
-router.post('/logout', (req: AuthenticatedRequest, res: Response) => {
+router.post('/logout', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const token = req.cookies?.session_token || (req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.substring(7) : null);
     const ipAddress = (req.ip || req.socket.remoteAddress || '127.0.0.1').replace('::ffff:', '');
     const userAgent = req.headers['user-agent'] || 'Unknown';
 
     if (token) {
-      authService.logout(token, ipAddress, userAgent);
+      await authService.logout(token, ipAddress, userAgent);
     }
 
     res.clearCookie('session_token', { path: '/' });

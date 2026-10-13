@@ -12,10 +12,10 @@ const router = Router();
  * GET /api/attendance/today
  * Retrieves today's attendance state for the authenticated staff member
  */
-router.get('/today', requireAuth, requireStaff, (req: AuthenticatedRequest, res: Response) => {
+router.get('/today', requireAuth, requireStaff, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const staffId = req.user!.id;
-    const todayData = attendanceService.getTodayAttendance(staffId);
+    const todayData = await attendanceService.getTodayAttendance(staffId);
     return sendSuccess(res, todayData);
   } catch (error) {
     console.error('[AttendanceRoutes] getToday error:', error);
@@ -29,7 +29,7 @@ router.get('/today', requireAuth, requireStaff, (req: AuthenticatedRequest, res:
  * Identity is strictly derived from server session (req.user.id)
  * Office network verification is strictly enforced
  */
-router.post('/check-in', requireAuth, requireStaff, (req: AuthenticatedRequest, res: Response) => {
+router.post('/check-in', requireAuth, requireStaff, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const staffId = req.user!.id;
     const userAgent = req.headers['user-agent'] || 'Unknown';
@@ -79,7 +79,7 @@ router.post('/check-in', requireAuth, requireStaff, (req: AuthenticatedRequest, 
     }
 
     // 2. Execute attendance check-in
-    const result = attendanceService.checkIn({
+    const result = await attendanceService.checkIn({
       staffId,
       clientIp: networkVerification.detectedIp,
       userAgent,
@@ -115,7 +115,7 @@ router.post('/check-in', requireAuth, requireStaff, (req: AuthenticatedRequest, 
  * Secure Check-Out endpoint for authenticated staff
  * Office network verification is strictly enforced
  */
-router.post('/check-out', requireAuth, requireStaff, (req: AuthenticatedRequest, res: Response) => {
+router.post('/check-out', requireAuth, requireStaff, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const staffId = req.user!.id;
     const userAgent = req.headers['user-agent'] || 'Unknown';
@@ -165,7 +165,7 @@ router.post('/check-out', requireAuth, requireStaff, (req: AuthenticatedRequest,
     }
 
     // 2. Execute attendance check-out
-    const result = attendanceService.checkOut({
+    const result = await attendanceService.checkOut({
       staffId,
       clientIp: networkVerification.detectedIp,
       userAgent,
@@ -197,13 +197,13 @@ router.post('/check-out', requireAuth, requireStaff, (req: AuthenticatedRequest,
  * GET /api/attendance/my-history
  * Retrieves authenticated staff member's personal attendance history
  */
-router.get('/my-history', requireAuth, requireStaff, (req: AuthenticatedRequest, res: Response) => {
+router.get('/my-history', requireAuth, requireStaff, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const staffId = req.user!.id;
     const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : 30;
     const safeLimit = isNaN(limit) || limit <= 0 ? 30 : Math.min(limit, 100);
 
-    const history = attendanceService.getStaffHistory(staffId, safeLimit);
+    const history = await attendanceService.getStaffHistory(staffId, safeLimit);
 
     return sendSuccess(res, {
       history,

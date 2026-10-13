@@ -1,4 +1,4 @@
-import { getDatabase } from '../db/index.ts';
+import { dbAdapter } from '../db/adapter.ts';
 import { generateId } from '../utils/crypto.ts';
 import { auditService } from './audit.service.ts';
 import {
@@ -65,14 +65,16 @@ class AttendanceService {
   /**
    * Retrieves current staff attendance state for today
    */
-  public getTodayAttendance(staffId: string, customDate?: string): TodayAttendanceData {
-    const db = getDatabase();
+  public async getTodayAttendance(staffId: string, customDate?: string): Promise<TodayAttendanceData> {
     const todayDate = customDate || getTodayDateString();
 
-    const row = (db.prepare(`
+    const row = await dbAdapter.queryOne<RawAttendanceRow>(
+      `
       SELECT * FROM attendance
-      WHERE staff_id = ? AND date = ?
-    `).get(staffId, todayDate) as unknown) as RawAttendanceRow | undefined;
+      WHERE staff_id = $1 AND date = $2
+      `,
+      [staffId, todayDate]
+    );
 
     const serverTime = new Date().toISOString();
 
@@ -110,29 +112,31 @@ class AttendanceService {
    * Authenticated Check-In
    * Rejects duplicate check-ins for the same day
    */
-  public checkIn(params: {
+  public async checkIn(params: {
     staffId: string;
     clientIp: string;
     userAgent: string;
     verificationMethod?: string;
     customDate?: string;
     customTime?: string;
-  }): {
+  }): Promise<{
     success: boolean;
     attendance?: AttendanceRecord;
     state?: AttendanceDailyState;
     errorCode?: ApiErrorCode | string;
     errorMessage?: string;
-  } {
-    const db = getDatabase();
+  }> {
     const todayDate = params.customDate || getTodayDateString();
     const nowIso = params.customTime || new Date().toISOString();
 
     // Check if record already exists for today
-    const existing = (db.prepare(`
+    const existing = await dbAdapter.queryOne<RawAttendanceRow>(
+      `
       SELECT id, check_in, check_out FROM attendance
-      WHERE staff_id = ? AND date = ?
-    `).get(params.staffId, todayDate) as unknown) as RawAttendanceRow | undefined;
+      WHERE staff_id = $1 AND date = $2
+      `,
+      [params.staffId, todayDate]
+    );
 
     if (existing && existing.check_in) {
       return {
@@ -147,22 +151,25 @@ class AttendanceService {
     const initialStatus = AttendanceStatus.PRESENT;
 
     try {
-      db.prepare(`
+      await dbAdapter.execute(
+        `
         INSERT INTO attendance (
           id, staff_id, date, check_in, check_in_ip, check_in_user_agent,
           check_in_verification_method, status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        id,
-        params.staffId,
-        todayDate,
-        nowIso,
-        params.clientIp,
-        params.userAgent,
-        verificationMethod,
-        initialStatus,
-        nowIso,
-        nowIso
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        `,
+        [
+          id,
+          params.staffId,
+          todayDate,
+          nowIso,
+          params.clientIp,
+          params.userAgent,
+          verificationMethod,
+          initialStatus,
+          nowIso,
+          nowIso,
+        ]
       );
 
       // Record immutable audit log
@@ -180,11 +187,14 @@ class AttendanceService {
         },
       });
 
-      const newRow = (db.prepare(`
-        SELECT * FROM attendance WHERE id = ?
-      `).get(id) as unknown) as RawAttendanceRow;
+      const newRow = await dbAdapter.queryOne<RawAttendanceRow>(
+        `
+        SELECT * FROM attendance WHERE id = $1
+        `,
+        [id]
+      );
 
-      const record = mapRowToAttendanceRecord(newRow);
+      const record = newRow ? mapRowToAttendanceRecord(newRow) : ({} as AttendanceRecord);
 
       return {
         success: true,
@@ -192,9 +202,14 @@ class AttendanceService {
         state: 'CHECKED_IN',
       };
     } catch (error: unknown) {
-      // Check for SQLite UNIQUE constraint race condition
+      // Check for UNIQUE constraint race condition
       const errorMsg = String(error);
-      if (errorMsg.includes('UNIQUE constraint failed') || errorMsg.includes('PRIMARY KEY')) {
+      if (
+        errorMsg.includes('UNIQUE constraint failed') ||
+        errorMsg.includes('PRIMARY KEY') ||
+        errorMsg.includes('uq_attendance_staff_date') ||
+        errorMsg.includes('duplicate key')
+      ) {
         return {
           success: false,
           errorCode: ApiErrorCode.ALREADY_CHECKED_IN,
@@ -214,29 +229,31 @@ class AttendanceService {
    * Authenticated Check-Out
    * Validates active check-in and prevents duplicate check-outs
    */
-  public checkOut(params: {
+  public async checkOut(params: {
     staffId: string;
     clientIp: string;
     userAgent: string;
     verificationMethod?: string;
     customDate?: string;
     customTime?: string;
-  }): {
+  }): Promise<{
     success: boolean;
     attendance?: AttendanceRecord;
     state?: AttendanceDailyState;
     formattedDuration?: string;
     errorCode?: ApiErrorCode | string;
     errorMessage?: string;
-  } {
-    const db = getDatabase();
+  }> {
     const todayDate = params.customDate || getTodayDateString();
     const nowIso = params.customTime || new Date().toISOString();
 
-    const existing = (db.prepare(`
+    const existing = await dbAdapter.queryOne<RawAttendanceRow>(
+      `
       SELECT * FROM attendance
-      WHERE staff_id = ? AND date = ?
-    `).get(params.staffId, todayDate) as unknown) as RawAttendanceRow | undefined;
+      WHERE staff_id = $1 AND date = $2
+      `,
+      [params.staffId, todayDate]
+    );
 
     if (!existing || !existing.check_in) {
       return {
@@ -258,26 +275,29 @@ class AttendanceService {
     const verificationMethod = params.verificationMethod || VerificationMethod.OFFICE_IP;
 
     try {
-      const updateRes = db.prepare(`
+      const updateRes = await dbAdapter.execute(
+        `
         UPDATE attendance
-        SET check_out = ?,
-            check_out_ip = ?,
-            check_out_user_agent = ?,
-            check_out_verification_method = ?,
-            status = ?,
-            updated_at = ?
-        WHERE id = ? AND check_out IS NULL
-      `).run(
-        nowIso,
-        params.clientIp,
-        params.userAgent,
-        verificationMethod,
-        AttendanceStatus.CHECKED_OUT,
-        nowIso,
-        existing.id
+        SET check_out = $1,
+            check_out_ip = $2,
+            check_out_user_agent = $3,
+            check_out_verification_method = $4,
+            status = $5,
+            updated_at = $6
+        WHERE id = $7 AND check_out IS NULL
+        `,
+        [
+          nowIso,
+          params.clientIp,
+          params.userAgent,
+          verificationMethod,
+          AttendanceStatus.CHECKED_OUT,
+          nowIso,
+          existing.id,
+        ]
       );
 
-      if (updateRes.changes === 0) {
+      if (updateRes.rowCount === 0) {
         return {
           success: false,
           errorCode: ApiErrorCode.ALREADY_CHECKED_OUT,
@@ -303,11 +323,14 @@ class AttendanceService {
         },
       });
 
-      const updatedRow = (db.prepare(`
-        SELECT * FROM attendance WHERE id = ?
-      `).get(existing.id) as unknown) as RawAttendanceRow;
+      const updatedRow = await dbAdapter.queryOne<RawAttendanceRow>(
+        `
+        SELECT * FROM attendance WHERE id = $1
+        `,
+        [existing.id]
+      );
 
-      const record = mapRowToAttendanceRecord(updatedRow);
+      const record = updatedRow ? mapRowToAttendanceRecord(updatedRow) : ({} as AttendanceRecord);
 
       return {
         success: true,
@@ -328,16 +351,18 @@ class AttendanceService {
   /**
    * Retrieves personal attendance history for authenticated staff member
    */
-  public getStaffHistory(staffId: string, limit = 30): AttendanceHistoryItem[] {
-    const db = getDatabase();
-    const rows = (db.prepare(`
+  public async getStaffHistory(staffId: string, limit = 30): Promise<AttendanceHistoryItem[]> {
+    const rows = await dbAdapter.query<RawAttendanceRow>(
+      `
       SELECT * FROM attendance
-      WHERE staff_id = ?
+      WHERE staff_id = $1
       ORDER BY date DESC, created_at DESC
-      LIMIT ?
-    `).all(staffId, limit) as unknown) as RawAttendanceRow[];
+      LIMIT $2
+      `,
+      [staffId, limit]
+    );
 
-    return rows.map((row) => {
+    return (rows || []).map((row) => {
       const record = mapRowToAttendanceRecord(row);
       const duration = calculateWorkingDuration(row.check_in, row.check_out);
       return {

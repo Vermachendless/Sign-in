@@ -30,14 +30,14 @@ router.use('/reports', reportRoutes);
  * GET /api/admin/audit-logs
  * Retrieves immutable audit logs with pagination and search
  */
-router.get('/audit-logs', (req: AuthenticatedRequest, res: Response) => {
+router.get('/audit-logs', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string, 10) || 20));
     const action = typeof req.query.action === 'string' ? req.query.action : undefined;
     const search = typeof req.query.search === 'string' ? req.query.search : undefined;
 
-    const result = auditService.listLogs({ page, limit, action, search });
+    const result = await auditService.listLogs({ page, limit, action, search });
     return sendSuccess(res, result);
   } catch (error) {
     console.error('[AdminRoutes] getAuditLogs error:', error);
@@ -49,9 +49,9 @@ router.get('/audit-logs', (req: AuthenticatedRequest, res: Response) => {
  * GET /api/admin/dashboard
  * Retrieves today's attendance summary and live staff records
  */
-router.get('/dashboard', (req: AuthenticatedRequest, res: Response) => {
+router.get('/dashboard', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const summary = adminService.getDashboardSummary();
+    const summary = await adminService.getDashboardSummary();
     return sendSuccess(res, summary);
   } catch (error) {
     console.error('[AdminRoutes] getDashboard error:', error);
@@ -63,11 +63,11 @@ router.get('/dashboard', (req: AuthenticatedRequest, res: Response) => {
  * GET /api/admin/staff
  * Lists staff members with search, status, and role filters
  */
-router.get('/staff', (req: AuthenticatedRequest, res: Response) => {
+router.get('/staff', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { search, status, role } = req.query;
 
-    const staffList = adminService.listStaff({
+    const staffList = await adminService.listStaff({
       search: typeof search === 'string' ? search : undefined,
       status: typeof status === 'string' ? (status as UserStatus) : undefined,
       role: typeof role === 'string' ? (role as UserRole) : undefined,
@@ -87,14 +87,14 @@ router.get('/staff', (req: AuthenticatedRequest, res: Response) => {
  * GET /api/admin/staff/:id
  * Retrieves detailed staff profile with lifetime stats and recent attendance
  */
-router.get('/staff/:id', (req: AuthenticatedRequest, res: Response) => {
+router.get('/staff/:id', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
     if (!id) {
       return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, 'Staff ID is required.');
     }
 
-    const detail = adminService.getStaffById(id);
+    const detail = await adminService.getStaffById(id);
     if (!detail) {
       return sendError(res, 404, ApiErrorCode.NOT_FOUND, 'Staff member not found.');
     }
@@ -161,7 +161,7 @@ router.post('/staff', async (req: AuthenticatedRequest, res: Response) => {
  * PATCH /api/admin/staff/:id
  * Updates staff account profile fields
  */
-router.patch('/staff/:id', (req: AuthenticatedRequest, res: Response) => {
+router.patch('/staff/:id', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const actor = req.user!;
     const { id } = req.params;
@@ -174,7 +174,7 @@ router.patch('/staff/:id', (req: AuthenticatedRequest, res: Response) => {
     const ipAddress = (req.ip || req.socket.remoteAddress || '127.0.0.1').replace('::ffff:', '');
     const userAgent = req.headers['user-agent'] || 'Unknown';
 
-    const result = adminService.updateStaff(
+    const result = await adminService.updateStaff(
       actor,
       id,
       {
@@ -218,7 +218,7 @@ router.patch('/staff/:id', (req: AuthenticatedRequest, res: Response) => {
  * PATCH /api/admin/staff/:id/status
  * Activates or deactivates/suspends a staff account
  */
-router.patch('/staff/:id/status', (req: AuthenticatedRequest, res: Response) => {
+router.patch('/staff/:id/status', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const actor = req.user!;
     const { id } = req.params;
@@ -240,7 +240,7 @@ router.patch('/staff/:id/status', (req: AuthenticatedRequest, res: Response) => 
     const ipAddress = (req.ip || req.socket.remoteAddress || '127.0.0.1').replace('::ffff:', '');
     const userAgent = req.headers['user-agent'] || 'Unknown';
 
-    const result = adminService.setStaffStatus(actor, id, status as UserStatus, ipAddress, userAgent);
+    const result = await adminService.setStaffStatus(actor, id, status as UserStatus, ipAddress, userAgent);
 
     if (!result.success || !result.user) {
       const statusCode =
@@ -286,7 +286,7 @@ router.get('/office-network', requireSuperAdmin, (req: AuthenticatedRequest, res
  * POST /api/admin/office-network
  * Super Admin only: Adds an approved public IP to system_settings.approvedOfficeIPs
  */
-router.post('/office-network', requireSuperAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.post('/office-network', requireSuperAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const actor = req.user!;
     const { ip } = req.body || {};
@@ -298,7 +298,7 @@ router.post('/office-network', requireSuperAdmin, (req: AuthenticatedRequest, re
     const { ip: clientIp } = extractClientIp(req);
     const userAgent = req.headers['user-agent'] || 'Unknown';
 
-    const result = addApprovedOfficeIp(actor.id, ip, clientIp, userAgent);
+    const result = await addApprovedOfficeIp(actor.id, ip, clientIp, userAgent);
 
     if (!result.success) {
       return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, result.error || 'Failed to add office IP.');
@@ -323,7 +323,7 @@ router.post('/office-network', requireSuperAdmin, (req: AuthenticatedRequest, re
  * POST /api/admin/office-network/add-current
  * Super Admin only: Adds the server-detected public IP to system_settings.approvedOfficeIPs
  */
-router.post('/office-network/add-current', requireSuperAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.post('/office-network/add-current', requireSuperAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const actor = req.user!;
     const { ip: clientIp } = extractClientIp(req);
@@ -333,7 +333,7 @@ router.post('/office-network/add-current', requireSuperAdmin, (req: Authenticate
       return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, 'Could not detect client IP from current connection.');
     }
 
-    const result = addApprovedOfficeIp(actor.id, clientIp, clientIp, userAgent);
+    const result = await addApprovedOfficeIp(actor.id, clientIp, clientIp, userAgent);
 
     if (!result.success) {
       return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, result.error || 'Failed to add current IP.');
@@ -358,7 +358,7 @@ router.post('/office-network/add-current', requireSuperAdmin, (req: Authenticate
  * DELETE /api/admin/office-network/:ip
  * Super Admin only: Removes an approved IP from system_settings.approvedOfficeIPs
  */
-router.delete('/office-network/:ip', requireSuperAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.delete('/office-network/:ip', requireSuperAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const actor = req.user!;
     const { ip } = req.params;
@@ -370,7 +370,7 @@ router.delete('/office-network/:ip', requireSuperAdmin, (req: AuthenticatedReque
     const { ip: clientIp } = extractClientIp(req);
     const userAgent = req.headers['user-agent'] || 'Unknown';
 
-    const result = removeApprovedOfficeIp(actor.id, ip, clientIp, userAgent);
+    const result = await removeApprovedOfficeIp(actor.id, ip, clientIp, userAgent);
 
     if (!result.success) {
       return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, result.error || 'Failed to remove office IP.');
@@ -391,7 +391,7 @@ router.delete('/office-network/:ip', requireSuperAdmin, (req: AuthenticatedReque
  * POST /api/admin/office-network/remove
  * Super Admin only: Alternative POST endpoint for removing an approved IP from system_settings.approvedOfficeIPs
  */
-router.post('/office-network/remove', requireSuperAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.post('/office-network/remove', requireSuperAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const actor = req.user!;
     const { ip } = req.body || {};
@@ -403,7 +403,7 @@ router.post('/office-network/remove', requireSuperAdmin, (req: AuthenticatedRequ
     const { ip: clientIp } = extractClientIp(req);
     const userAgent = req.headers['user-agent'] || 'Unknown';
 
-    const result = removeApprovedOfficeIp(actor.id, ip, clientIp, userAgent);
+    const result = await removeApprovedOfficeIp(actor.id, ip, clientIp, userAgent);
 
     if (!result.success) {
       return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, result.error || 'Failed to remove office IP.');

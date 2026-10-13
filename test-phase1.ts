@@ -65,14 +65,14 @@ async function runPhase1Tests() {
 
   // 8. Session Validation & Retrieval
   const token = staffLogin.token!;
-  const sessionValidation = authService.validateSession(token);
+  const sessionValidation = await authService.validateSession(token);
   assert(sessionValidation.valid === true, 'validateSession confirms active session');
   assert(sessionValidation.user?.email === 'john.doe@example.com', 'validateSession returns safe user data');
 
   // 9. Mid-Session Account Suspension Test (Live Status Check)
   // Simulate an admin suspending John Doe in DB while session is still technically unexpired
   db.prepare('UPDATE users SET status = ? WHERE email = ?').run(UserStatus.SUSPENDED, 'john.doe@example.com');
-  const midSessionCheck = authService.validateSession(token);
+  const midSessionCheck = await authService.validateSession(token);
   assert(midSessionCheck.valid === false, 'Mid-session validation rejects user after status is updated to SUSPENDED');
   assert(midSessionCheck.errorCode === 'ACCOUNT_SUSPENDED', 'Correctly identifies suspension mid-session');
 
@@ -80,8 +80,8 @@ async function runPhase1Tests() {
   db.prepare('UPDATE users SET status = ? WHERE email = ?').run(UserStatus.ACTIVE, 'john.doe@example.com');
 
   // 10. Logout and Session Invalidation Test
-  authService.logout(token, '127.0.0.1', 'TestRunner/1.0');
-  const postLogoutValidation = authService.validateSession(token);
+  await authService.logout(token, '127.0.0.1', 'TestRunner/1.0');
+  const postLogoutValidation = await authService.validateSession(token);
   assert(postLogoutValidation.valid === false, 'Session is invalid after logout');
 
   // 11. Audit Log Verification

@@ -6,6 +6,16 @@ import { DB_SCHEMA_SQL } from './schema.ts';
 let dbInstance: DatabaseSync | null = null;
 
 export function getDatabase(): DatabaseSync {
+  // Strict production fail-closed check:
+  // Production must never initialize, import for execution, or fall back to SQLite.
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(
+      '[FATAL PRODUCTION ERROR] Synchronous SQLite getDatabase() called in production mode. ' +
+      'Production Cloud Run must exclusively use PostgreSQL via getPostgresPool(). ' +
+      'Refusing to initialize SQLite in production.'
+    );
+  }
+
   if (dbInstance) {
     return dbInstance;
   }
@@ -79,3 +89,24 @@ export function closeDatabase(): void {
     dbInstance = null;
   }
 }
+
+/**
+ * Returns the active database engine based on environment.
+ */
+export function getDatabaseEngine(): 'postgres' | 'sqlite' {
+  if (process.env.NODE_ENV === 'production' || process.env.DATABASE_URL) {
+    return 'postgres';
+  }
+  return 'sqlite';
+}
+
+// Re-export PostgreSQL connector functions
+export {
+  getPostgresPool,
+  withTransaction,
+  queryPostgres,
+  verifyPostgresConnection,
+  closePostgresPool,
+  resolvePostgresConfig,
+} from './postgres.ts';
+

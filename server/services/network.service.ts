@@ -1,6 +1,6 @@
 import net from 'node:net';
 import { Request } from 'express';
-import { getDatabase } from '../db/index.ts';
+import { dbAdapter } from '../db/adapter.ts';
 import { auditService } from './audit.service.ts';
 import { generateId } from '../utils/crypto.ts';
 import { OfficeNetworkConfig } from '../../src/types/index.ts';
@@ -107,6 +107,53 @@ export function extractClientIp(req: Request): {
   return { ip: socketIp, ipSource: 'socket.remoteAddress', proxyHeadersDetected, proxyHopCount };
 }
 
+// In-memory cache for database-configured office IPs to enable non-blocking verification
+let cachedDbOfficeIps: string[] | null = null;
+
+/**
+ * Parses raw JSON string or comma-separated string of office IPs into normalized array
+ */
+function parseOfficeIpsSetting(rawValue?: string | null): string[] {
+  if (!rawValue) return [];
+  const result: string[] = [];
+  try {
+    const parsed = JSON.parse(rawValue);
+    if (Array.isArray(parsed)) {
+      for (const item of parsed) {
+        if (typeof item === 'string') {
+          const clean = normalizeIp(item);
+          if (clean && !result.includes(clean)) result.push(clean);
+        }
+      }
+      return result;
+    }
+  } catch {
+    // Fall back to comma-separated parsing
+  }
+  const items = rawValue.split(',').map((s) => normalizeIp(s)).filter(Boolean);
+  for (const clean of items) {
+    if (clean && !result.includes(clean)) result.push(clean);
+  }
+  return result;
+}
+
+/**
+ * Asynchronously refreshes the in-memory cache of approved office IPs from database
+ */
+export async function refreshOfficeIpsCache(): Promise<string[]> {
+  try {
+    const row = await dbAdapter.queryOne<{ value: string }>(
+      'SELECT value FROM system_settings WHERE key = $1',
+      ['approvedOfficeIPs']
+    );
+    cachedDbOfficeIps = parseOfficeIpsSetting(row?.value);
+    return cachedDbOfficeIps;
+  } catch (err) {
+    console.error('[NetworkService] Error refreshing office IPs from database:', err);
+    return cachedDbOfficeIps || [];
+  }
+}
+
 /**
  * Retrieve the set of approved office IPs from environment variables and database settings
  */
@@ -130,40 +177,29 @@ export function getApprovedOfficeIps(): { envIps: string[]; dbIps: string[]; all
     }
   }
 
-  // 2. Read from system_settings table in database
-  try {
-    const db = getDatabase();
-    const row = db.prepare('SELECT value FROM system_settings WHERE key = ?').get('approvedOfficeIPs') as
-      | { value: string }
-      | undefined;
-
-    if (row && row.value) {
-      try {
-        const parsed = JSON.parse(row.value);
-        if (Array.isArray(parsed)) {
-          for (const item of parsed) {
-            if (typeof item === 'string') {
-              const clean = normalizeIp(item);
-              if (clean && !allIps.has(clean)) {
-                dbIps.push(clean);
-                allIps.add(clean);
-              }
-            }
-          }
-        }
-      } catch {
-        // If stored as plain string or comma-separated string
-        const items = row.value.split(',').map((s) => normalizeIp(s)).filter(Boolean);
-        for (const clean of items) {
-          if (clean && !allIps.has(clean)) {
-            dbIps.push(clean);
-            allIps.add(clean);
-          }
+  // 2. Read from cached DB IPs or try synchronous dual-result if not cached yet
+  if (cachedDbOfficeIps !== null) {
+    for (const ip of cachedDbOfficeIps) {
+      dbIps.push(ip);
+      allIps.add(ip);
+    }
+  } else {
+    try {
+      const row = dbAdapter.queryOne<{ value: string }>(
+        'SELECT value FROM system_settings WHERE key = $1',
+        ['approvedOfficeIPs']
+      );
+      if (row && typeof row === 'object' && 'value' in row && typeof (row as any).value === 'string') {
+        const parsedIps = parseOfficeIpsSetting((row as any).value);
+        cachedDbOfficeIps = parsedIps;
+        for (const ip of parsedIps) {
+          dbIps.push(ip);
+          allIps.add(ip);
         }
       }
+    } catch (err) {
+      console.error('[NetworkService] Error reading office IPs from database:', err);
     }
-  } catch (err) {
-    console.error('[NetworkService] Error reading office IPs from database:', err);
   }
 
   return { envIps, dbIps, allIps };
@@ -328,12 +364,12 @@ export function getOfficeNetworkSettings(req?: Request): OfficeNetworkConfig {
 /**
  * Super Admin: Adds an approved public IP to system_settings.approvedOfficeIPs with audit logging
  */
-export function addApprovedOfficeIp(
+export async function addApprovedOfficeIp(
   actorId: string,
   ipInput: string,
   clientIp?: string,
   userAgent?: string
-): { success: boolean; approvedIps: string[]; dbIps: string[]; addedIp?: string; error?: string } {
+): Promise<{ success: boolean; approvedIps: string[]; dbIps: string[]; addedIp?: string; error?: string }> {
   const clean = normalizeIp(ipInput);
   if (!clean || !validateIpFormat(clean)) {
     return {
@@ -354,7 +390,6 @@ export function addApprovedOfficeIp(
     };
   }
 
-  const db = getDatabase();
   const { dbIps } = getApprovedOfficeIps();
 
   if (dbIps.includes(clean)) {
@@ -370,14 +405,19 @@ export function addApprovedOfficeIp(
   const updatedDbIps = [...dbIps, clean];
   const now = new Date().toISOString();
 
-  db.prepare(`
+  await dbAdapter.execute(
+    `
     INSERT INTO system_settings (id, key, value, description, updated_at, updated_by)
-    VALUES (?, 'approvedOfficeIPs', ?, 'Approved public IP addresses for company office network Wi-Fi check-in', ?, ?)
+    VALUES ($1, 'approvedOfficeIPs', $2, 'Approved public IP addresses for company office network Wi-Fi check-in', $3, $4)
     ON CONFLICT(key) DO UPDATE SET
-      value = excluded.value,
-      updated_at = excluded.updated_at,
-      updated_by = excluded.updated_by
-  `).run(generateId(), JSON.stringify(updatedDbIps), now, actorId);
+      value = EXCLUDED.value,
+      updated_at = EXCLUDED.updated_at,
+      updated_by = EXCLUDED.updated_by
+    `,
+    [generateId(), JSON.stringify(updatedDbIps), now, actorId]
+  );
+
+  cachedDbOfficeIps = updatedDbIps;
 
   auditService.log({
     actorId,
@@ -404,12 +444,12 @@ export function addApprovedOfficeIp(
 /**
  * Super Admin: Removes an approved IP from system_settings.approvedOfficeIPs with audit logging
  */
-export function removeApprovedOfficeIp(
+export async function removeApprovedOfficeIp(
   actorId: string,
   ipInput: string,
   clientIp?: string,
   userAgent?: string
-): { success: boolean; approvedIps: string[]; dbIps: string[]; removedIp?: string; error?: string } {
+): Promise<{ success: boolean; approvedIps: string[]; dbIps: string[]; removedIp?: string; error?: string }> {
   const clean = normalizeIp(ipInput);
   if (!clean) {
     return {
@@ -420,20 +460,24 @@ export function removeApprovedOfficeIp(
     };
   }
 
-  const db = getDatabase();
   const { dbIps } = getApprovedOfficeIps();
 
   const updatedDbIps = dbIps.filter((ip) => normalizeIp(ip) !== clean);
   const now = new Date().toISOString();
 
-  db.prepare(`
+  await dbAdapter.execute(
+    `
     INSERT INTO system_settings (id, key, value, description, updated_at, updated_by)
-    VALUES (?, 'approvedOfficeIPs', ?, 'Approved public IP addresses for company office network Wi-Fi check-in', ?, ?)
+    VALUES ($1, 'approvedOfficeIPs', $2, 'Approved public IP addresses for company office network Wi-Fi check-in', $3, $4)
     ON CONFLICT(key) DO UPDATE SET
-      value = excluded.value,
-      updated_at = excluded.updated_at,
-      updated_by = excluded.updated_by
-  `).run(generateId(), JSON.stringify(updatedDbIps), now, actorId);
+      value = EXCLUDED.value,
+      updated_at = EXCLUDED.updated_at,
+      updated_by = EXCLUDED.updated_by
+    `,
+    [generateId(), JSON.stringify(updatedDbIps), now, actorId]
+  );
+
+  cachedDbOfficeIps = updatedDbIps;
 
   auditService.log({
     actorId,

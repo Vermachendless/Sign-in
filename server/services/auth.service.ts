@@ -1,4 +1,4 @@
-import { getDatabase } from '../db/index.ts';
+import { dbAdapter } from '../db/adapter.ts';
 import { generateSecureToken, hashToken, generateId, verifyPassword } from '../utils/crypto.ts';
 import { auditService } from './audit.service.ts';
 import { UserRole, UserStatus, SafeUser } from '../../src/types/index.ts';
@@ -76,18 +76,19 @@ export class AuthService {
       };
     }
 
-    const db = getDatabase();
-
-    // Query user by email (case-insensitive)
-    const user = (db.prepare(`
+    // Query user by email (case-insensitive) using parameterized query
+    const user = await dbAdapter.queryOne<RawUserRow>(
+      `
       SELECT id, email, password_hash, first_name, last_name, phone, department, role, status, created_at, updated_at
       FROM users
-      WHERE email = ?
-    `).get(normalizedEmail) as unknown) as RawUserRow | undefined;
+      WHERE LOWER(email) = LOWER($1)
+      `,
+      [normalizedEmail]
+    );
 
     // Defend against account enumeration: verify dummy password if user not found to normalize response time
     if (!user) {
-      auditService.log({
+      await auditService.log({
         actorId: null,
         action: 'LOGIN_FAILED',
         targetUserId: null,
@@ -105,7 +106,7 @@ export class AuthService {
 
     // Check account status
     if (user.status === UserStatus.SUSPENDED) {
-      auditService.log({
+      await auditService.log({
         actorId: user.id,
         action: 'LOGIN_FAILED',
         targetUserId: user.id,
@@ -122,7 +123,7 @@ export class AuthService {
     }
 
     if (user.status === UserStatus.REMOVED) {
-      auditService.log({
+      await auditService.log({
         actorId: user.id,
         action: 'LOGIN_FAILED',
         targetUserId: user.id,
@@ -141,7 +142,7 @@ export class AuthService {
     // Verify password
     const isPasswordValid = await verifyPassword(passwordInput, user.password_hash);
     if (!isPasswordValid) {
-      auditService.log({
+      await auditService.log({
         actorId: user.id,
         action: 'LOGIN_FAILED',
         targetUserId: user.id,
@@ -164,17 +165,20 @@ export class AuthService {
     const now = new Date();
     const expiresAt = new Date(now.getTime() + this.sessionDurationDays * 24 * 60 * 60 * 1000).toISOString();
 
-    db.prepare(`
+    await dbAdapter.execute(
+      `
       INSERT INTO sessions (id, user_id, token_hash, expires_at, ip_address, user_agent, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      sessionId,
-      user.id,
-      tokenHash,
-      expiresAt,
-      ipAddress || null,
-      userAgent || null,
-      now.toISOString()
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `,
+      [
+        sessionId,
+        user.id,
+        tokenHash,
+        expiresAt,
+        ipAddress || null,
+        userAgent || null,
+        now.toISOString(),
+      ]
     );
 
     const safeUser: SafeUser = {
@@ -188,7 +192,7 @@ export class AuthService {
       status: user.status,
     };
 
-    auditService.log({
+    await auditService.log({
       actorId: user.id,
       action: 'LOGIN',
       targetUserId: user.id,
@@ -208,22 +212,24 @@ export class AuthService {
   /**
    * Validate a session token from request cookie/header and retrieve live user state
    */
-  public validateSession(rawToken: string): SessionValidationResult {
+  public async validateSession(rawToken: string): Promise<SessionValidationResult> {
     if (!rawToken || typeof rawToken !== 'string') {
       return { valid: false, errorCode: 'UNAUTHORIZED', errorMessage: 'No session provided.' };
     }
 
     const tokenHash = hashToken(rawToken);
-    const db = getDatabase();
 
-    const row = (db.prepare(`
+    const row = await dbAdapter.queryOne<RawSessionRow>(
+      `
       SELECT 
         s.id, s.user_id, s.token_hash, s.expires_at, s.created_at,
         u.email, u.first_name, u.last_name, u.phone, u.department, u.role, u.status
       FROM sessions s
       JOIN users u ON u.id = s.user_id
-      WHERE s.token_hash = ?
-    `).get(tokenHash) as unknown) as RawSessionRow | undefined;
+      WHERE s.token_hash = $1
+      `,
+      [tokenHash]
+    );
 
     if (!row) {
       return { valid: false, errorCode: 'UNAUTHORIZED', errorMessage: 'Invalid or expired session.' };
@@ -233,7 +239,7 @@ export class AuthService {
     const expiresAtDate = new Date(row.expires_at);
     if (expiresAtDate.getTime() < Date.now()) {
       // Clean up expired session
-      db.prepare('DELETE FROM sessions WHERE id = ?').run(row.id);
+      await dbAdapter.execute('DELETE FROM sessions WHERE id = $1', [row.id]);
       return { valid: false, errorCode: 'UNAUTHORIZED', errorMessage: 'Session has expired.' };
     }
 
@@ -272,24 +278,26 @@ export class AuthService {
   /**
    * Terminate a specific session (Logout)
    */
-  public logout(rawToken: string, ipAddress?: string, userAgent?: string): void {
+  public async logout(rawToken: string, ipAddress?: string, userAgent?: string): Promise<void> {
     if (!rawToken) return;
 
     try {
       const tokenHash = hashToken(rawToken);
-      const db = getDatabase();
 
-      const session = (db.prepare(`
+      const session = await dbAdapter.queryOne<{ id: string; user_id: string; email: string }>(
+        `
         SELECT s.id, s.user_id, u.email
         FROM sessions s
         JOIN users u ON u.id = s.user_id
-        WHERE s.token_hash = ?
-      `).get(tokenHash) as unknown) as { id: string; user_id: string; email: string } | undefined;
+        WHERE s.token_hash = $1
+        `,
+        [tokenHash]
+      );
 
       if (session) {
-        db.prepare('DELETE FROM sessions WHERE id = ?').run(session.id);
+        await dbAdapter.execute('DELETE FROM sessions WHERE id = $1', [session.id]);
 
-        auditService.log({
+        await auditService.log({
           actorId: session.user_id,
           action: 'LOGOUT',
           targetUserId: session.user_id,
@@ -306,10 +314,10 @@ export class AuthService {
   /**
    * Terminate all sessions for a user (e.g. after suspension or password reset)
    */
-  public invalidateAllUserSessions(userId: string): void {
-    const db = getDatabase();
-    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId);
+  public async invalidateAllUserSessions(userId: string): Promise<void> {
+    await dbAdapter.execute('DELETE FROM sessions WHERE user_id = $1', [userId]);
   }
 }
 
 export const authService = new AuthService();
+

@@ -2,7 +2,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import cookieParser from 'cookie-parser';
 import path from 'node:path';
 import dotenv from 'dotenv';
-import { getDatabase, closeDatabase } from './server/db/index.ts';
+import { getDatabase, closeDatabase, closePostgresPool } from './server/db/index.ts';
 import { seedDatabase } from './server/db/seed.ts';
 import { securityHeaders } from './server/middleware/security.ts';
 import authRoutes from './server/routes/auth.routes.ts';
@@ -31,13 +31,26 @@ async function startServer() {
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
 
-  // Initialize SQLite database and run idempotent seeding
-  try {
-    getDatabase();
-    await seedDatabase();
-    console.log('[Database] Initialized and verified successfully.');
-  } catch (dbError) {
-    console.error('[Database] Initialization error:', dbError);
+  // Database initialization:
+  // In production, strictly verify DATABASE_URL is present and fail closed if missing.
+  if (process.env.NODE_ENV === 'production') {
+    if (!process.env.DATABASE_URL) {
+      console.error(
+        '[FATAL PRODUCTION ERROR] NODE_ENV is set to "production" but DATABASE_URL is missing. ' +
+        'Cloud Run deployment requires a durable managed PostgreSQL database. Refusing to start.'
+      );
+      process.exit(1);
+    }
+    console.log('[Database] Production mode active: Managed PostgreSQL configured via DATABASE_URL.');
+  } else {
+    // Non-production / Local development: Initialize SQLite database and run seed
+    try {
+      getDatabase();
+      await seedDatabase();
+      console.log('[Database] Local SQLite initialized and verified successfully.');
+    } catch (dbError) {
+      console.error('[Database] Local SQLite initialization error:', dbError);
+    }
   }
 
   // Health check endpoint
@@ -107,9 +120,14 @@ async function startServer() {
   // Graceful shutdown handling for container termination (Cloud Run / Docker)
   const shutdown = (signal: string) => {
     console.log(`[Server] Received ${signal}. Starting graceful shutdown...`);
-    server.close(() => {
+    server.close(async () => {
       console.log('[Server] HTTP server closed. Closing database connections...');
-      closeDatabase();
+      try {
+        closeDatabase();
+        await closePostgresPool();
+      } catch (closeErr) {
+        console.error('[Server] Error closing database connections during shutdown:', closeErr);
+      }
       console.log('[Server] Database closed cleanly. Exiting process.');
       process.exit(0);
     });

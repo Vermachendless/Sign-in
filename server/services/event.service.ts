@@ -1,4 +1,4 @@
-import { getDatabase } from '../db/index.ts';
+import { dbAdapter } from '../db/adapter.ts';
 import { generateId } from '../utils/crypto.ts';
 import { auditService } from './audit.service.ts';
 import {
@@ -69,12 +69,12 @@ export class EventService {
   /**
    * Create an event in DRAFT status
    */
-  public createEvent(
+  public async createEvent(
     actor: SafeUser,
     input: CreateEventInput,
     ipAddress?: string,
     userAgent?: string
-  ): { success: boolean; event?: EventRecord; error?: string } {
+  ): Promise<{ success: boolean; event?: EventRecord; error?: string }> {
     if (actor.role === UserRole.STAFF) {
       return { success: false, error: 'Staff members are not authorized to create events.' };
     }
@@ -100,29 +100,31 @@ export class EventService {
       return { success: false, error: dateValidation.error || 'Invalid event schedule.' };
     }
 
-    const db = getDatabase();
     const eventId = generateId();
     const now = new Date().toISOString();
     const description = input.description?.trim() || null;
 
     try {
-      db.prepare(`
+      await dbAdapter.execute(
+        `
         INSERT INTO events (
           id, title, description, location, start_at, end_at, status,
           created_by, approved_by, approved_at, rejection_reason,
           created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)
-      `).run(
-        eventId,
-        title,
-        description,
-        location,
-        dateValidation.startIso,
-        dateValidation.endIso,
-        EventStatus.DRAFT,
-        actor.id,
-        now,
-        now
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL, NULL, NULL, $9, $10)
+        `,
+        [
+          eventId,
+          title,
+          description,
+          location,
+          dateValidation.startIso,
+          dateValidation.endIso,
+          EventStatus.DRAFT,
+          actor.id,
+          now,
+          now,
+        ]
       );
 
       // Audit log event creation
@@ -141,7 +143,7 @@ export class EventService {
         },
       });
 
-      const event = this.getEventById(eventId, actor);
+      const event = await this.getEventById(eventId, actor);
       return { success: true, event: event || undefined };
     } catch (err) {
       console.error('[EventService] createEvent error:', err);
@@ -152,34 +154,35 @@ export class EventService {
   /**
    * Retrieves single event by ID with RBAC check and user detail joins
    */
-  public getEventById(eventId: string, actor: SafeUser): EventRecord | null {
-    const db = getDatabase();
-
-    const row = db.prepare(`
+  public async getEventById(eventId: string, actor: SafeUser): Promise<EventRecord | null> {
+    const row = await dbAdapter.queryOne<any>(
+      `
       SELECT 
         e.id,
         e.title,
         e.description,
         e.location,
-        e.start_at as startAt,
-        e.end_at as endAt,
+        e.start_at as "startAt",
+        e.end_at as "endAt",
         e.status,
-        e.created_by as createdBy,
-        e.approved_by as approvedBy,
-        e.approved_at as approvedAt,
-        e.rejection_reason as rejectionReason,
-        e.created_at as createdAt,
-        e.updated_at as updatedAt,
-        (u.first_name || ' ' || u.last_name) as creatorName,
-        u.email as creatorEmail,
-        u.role as creatorRole,
-        (au.first_name || ' ' || au.last_name) as approverName,
-        au.email as approverEmail
+        e.created_by as "createdBy",
+        e.approved_by as "approvedBy",
+        e.approved_at as "approvedAt",
+        e.rejection_reason as "rejectionReason",
+        e.created_at as "createdAt",
+        e.updated_at as "updatedAt",
+        (u.first_name || ' ' || u.last_name) as "creatorName",
+        u.email as "creatorEmail",
+        u.role as "creatorRole",
+        (au.first_name || ' ' || au.last_name) as "approverName",
+        au.email as "approverEmail"
       FROM events e
       LEFT JOIN users u ON e.created_by = u.id
       LEFT JOIN users au ON e.approved_by = au.id
-      WHERE e.id = ?
-    `).get(eventId) as unknown as (EventRecord & { startAt: string; endAt: string }) | undefined;
+      WHERE e.id = $1
+      `,
+      [eventId]
+    );
 
     if (!row) return null;
 
@@ -206,7 +209,7 @@ export class EventService {
   /**
    * List events with role-based visibility, search, and status filters
    */
-  public listEvents(
+  public async listEvents(
     actor: SafeUser,
     filters?: {
       status?: string;
@@ -214,76 +217,83 @@ export class EventService {
       page?: number;
       limit?: number;
     }
-  ): { events: EventRecord[]; total: number; page: number; limit: number; totalPages: number } {
-    const db = getDatabase();
+  ): Promise<{ events: EventRecord[]; total: number; page: number; limit: number; totalPages: number }> {
     const page = Math.max(1, filters?.page || 1);
     const limit = Math.min(100, Math.max(1, filters?.limit || 20));
     const offset = (page - 1) * limit;
 
     let whereClause = '1=1';
     const params: (string | number | null)[] = [];
+    let pIdx = 1;
 
     // Role-based visibility constraint
     if (actor.role === UserRole.STAFF) {
-      whereClause += ' AND e.status = ?';
+      whereClause += ` AND e.status = $${pIdx++}`;
       params.push(EventStatus.APPROVED);
     } else if (actor.role === UserRole.ADMIN) {
-      // Admin can see their own draft events, or any event that has progressed beyond draft
-      whereClause += ' AND (e.created_by = ? OR e.status != ?)';
+      whereClause += ` AND (e.created_by = $${pIdx++} OR e.status != $${pIdx++})`;
       params.push(actor.id, EventStatus.DRAFT);
     }
-    // Super Admin has unrestricted access to all events
 
     // Optional status filter
     if (filters?.status && filters.status !== 'ALL') {
-      whereClause += ' AND e.status = ?';
+      whereClause += ` AND e.status = $${pIdx++}`;
       params.push(filters.status.toUpperCase().trim());
     }
 
     // Optional search term
     if (filters?.search && filters.search.trim()) {
       const term = `%${filters.search.trim()}%`;
-      whereClause += ' AND (e.title LIKE ? OR e.location LIKE ? OR e.description LIKE ?)';
+      whereClause += ` AND (e.title LIKE $${pIdx++} OR e.location LIKE $${pIdx++} OR e.description LIKE $${pIdx++})`;
       params.push(term, term, term);
     }
 
-    const countRow = db.prepare(`
+    const countRow = await dbAdapter.queryOne<{ count: number }>(
+      `
       SELECT COUNT(*) as count
       FROM events e
       WHERE ${whereClause}
-    `).get(...params) as { count: number } | undefined;
+      `,
+      [...params]
+    );
 
     const total = countRow ? Number(countRow.count) : 0;
     const totalPages = Math.ceil(total / limit) || 1;
 
     const queryParams = [...params, limit, offset];
-    const rows = db.prepare(`
+    const limitPlaceholder = `$${pIdx++}`;
+    const offsetPlaceholder = `$${pIdx++}`;
+
+    const rows = await dbAdapter.query<any>(
+      `
       SELECT 
         e.id,
         e.title,
         e.description,
         e.location,
-        e.start_at as startAt,
-        e.end_at as endAt,
+        e.start_at as "startAt",
+        e.end_at as "endAt",
         e.status,
-        e.created_by as createdBy,
-        e.approved_by as approvedBy,
-        e.approved_at as approvedAt,
-        e.rejection_reason as rejectionReason,
-        e.created_at as createdAt,
-        e.updated_at as updatedAt,
-        (u.first_name || ' ' || u.last_name) as creatorName,
-        u.email as creatorEmail,
-        u.role as creatorRole,
-        (au.first_name || ' ' || au.last_name) as approverName,
-        au.email as approverEmail
+        e.created_by as "createdBy",
+        e.approved_by as "approvedBy",
+        e.approved_at as "approvedAt",
+        e.rejection_reason as "rejectionReason",
+        e.created_at as "createdAt",
+        e.updated_at as "updatedAt",
+        (u.first_name || ' ' || u.last_name) as "creatorName",
+        u.email as "creatorEmail",
+        u.role as "creatorRole",
+        (au.first_name || ' ' || au.last_name) as "approverName",
+        au.email as "approverEmail"
       FROM events e
       LEFT JOIN users u ON e.created_by = u.id
       LEFT JOIN users au ON e.approved_by = au.id
       WHERE ${whereClause}
       ORDER BY e.start_at DESC
-      LIMIT ? OFFSET ?
-    `).all(...queryParams) as unknown as (EventRecord & { startAt: string; endAt: string })[];
+      LIMIT ${limitPlaceholder} OFFSET ${offsetPlaceholder}
+      `,
+      queryParams
+    );
 
     const formattedEvents = (rows || []).map((row) => ({
       ...row,
@@ -303,33 +313,29 @@ export class EventService {
   /**
    * Update an event (respecting strict lifecycle state rules)
    */
-  public updateEvent(
+  public async updateEvent(
     eventId: string,
     actor: SafeUser,
     input: UpdateEventInput,
     ipAddress?: string,
     userAgent?: string
-  ): { success: boolean; event?: EventRecord; error?: string } {
-    const db = getDatabase();
-    const existing = db.prepare('SELECT * FROM events WHERE id = ?').get(eventId) as
-      | {
-          id: string;
-          title: string;
-          description: string | null;
-          location: string;
-          start_at: string;
-          end_at: string;
-          status: EventStatus;
-          created_by: string;
-        }
-      | undefined;
+  ): Promise<{ success: boolean; event?: EventRecord; error?: string }> {
+    const existing = await dbAdapter.queryOne<{
+      id: string;
+      title: string;
+      description: string | null;
+      location: string;
+      start_at: string;
+      end_at: string;
+      status: EventStatus;
+      created_by: string;
+    }>('SELECT * FROM events WHERE id = $1', [eventId]);
 
     if (!existing) {
       return { success: false, error: 'Event not found.' };
     }
 
     // Role & lifecycle edit rules:
-    // PENDING_APPROVAL cannot be edited directly (must withdraw to DRAFT first)
     if (existing.status === EventStatus.PENDING_APPROVAL) {
       return {
         success: false,
@@ -337,7 +343,6 @@ export class EventService {
       };
     }
 
-    // APPROVED events cannot be edited by Admin
     if (existing.status === EventStatus.APPROVED && actor.role !== UserRole.SUPER_ADMIN) {
       return {
         success: false,
@@ -345,7 +350,6 @@ export class EventService {
       };
     }
 
-    // Terminal statuses cannot be edited
     if (
       existing.status === EventStatus.REJECTED ||
       existing.status === EventStatus.CANCELLED ||
@@ -357,7 +361,6 @@ export class EventService {
       };
     }
 
-    // For DRAFT events, only the creator or a Super Admin can edit
     if (existing.status === EventStatus.DRAFT) {
       if (existing.created_by !== actor.id && actor.role !== UserRole.SUPER_ADMIN) {
         return { success: false, error: 'You are not authorized to edit this draft event.' };
@@ -392,18 +395,21 @@ export class EventService {
     const now = new Date().toISOString();
 
     try {
-      db.prepare(`
+      await dbAdapter.execute(
+        `
         UPDATE events
-        SET title = ?, description = ?, location = ?, start_at = ?, end_at = ?, updated_at = ?
-        WHERE id = ?
-      `).run(
-        title,
-        description,
-        location,
-        dateValidation.startIso,
-        dateValidation.endIso,
-        now,
-        eventId
+        SET title = $1, description = $2, location = $3, start_at = $4, end_at = $5, updated_at = $6
+        WHERE id = $7
+        `,
+        [
+          title,
+          description,
+          location,
+          dateValidation.startIso,
+          dateValidation.endIso,
+          now,
+          eventId,
+        ]
       );
 
       auditService.log({
@@ -419,7 +425,7 @@ export class EventService {
         },
       });
 
-      const updated = this.getEventById(eventId, actor);
+      const updated = await this.getEventById(eventId, actor);
       return { success: true, event: updated || undefined };
     } catch (err) {
       console.error('[EventService] updateEvent error:', err);
@@ -430,25 +436,22 @@ export class EventService {
   /**
    * Submit event for approval: DRAFT -> PENDING_APPROVAL
    */
-  public submitEvent(
+  public async submitEvent(
     eventId: string,
     actor: SafeUser,
     ipAddress?: string,
     userAgent?: string
-  ): { success: boolean; event?: EventRecord; error?: string } {
+  ): Promise<{ success: boolean; event?: EventRecord; error?: string }> {
     if (actor.role === UserRole.STAFF) {
       return { success: false, error: 'Staff members cannot submit events.' };
     }
 
-    const db = getDatabase();
-    const existing = db.prepare('SELECT * FROM events WHERE id = ?').get(eventId) as
-      | {
-          id: string;
-          title: string;
-          status: EventStatus;
-          created_by: string;
-        }
-      | undefined;
+    const existing = await dbAdapter.queryOne<{
+      id: string;
+      title: string;
+      status: EventStatus;
+      created_by: string;
+    }>('SELECT id, title, status, created_by FROM events WHERE id = $1', [eventId]);
 
     if (!existing) {
       return { success: false, error: 'Event not found.' };
@@ -466,11 +469,14 @@ export class EventService {
     }
 
     const now = new Date().toISOString();
-    db.prepare(`
+    await dbAdapter.execute(
+      `
       UPDATE events
-      SET status = ?, updated_at = ?
-      WHERE id = ?
-    `).run(EventStatus.PENDING_APPROVAL, now, eventId);
+      SET status = $1, updated_at = $2
+      WHERE id = $3
+      `,
+      [EventStatus.PENDING_APPROVAL, now, eventId]
+    );
 
     auditService.log({
       actorId: actor.id,
@@ -485,32 +491,29 @@ export class EventService {
       },
     });
 
-    const updated = this.getEventById(eventId, actor);
+    const updated = await this.getEventById(eventId, actor);
     return { success: true, event: updated || undefined };
   }
 
   /**
    * Withdraw submitted event: PENDING_APPROVAL -> DRAFT
    */
-  public withdrawEvent(
+  public async withdrawEvent(
     eventId: string,
     actor: SafeUser,
     ipAddress?: string,
     userAgent?: string
-  ): { success: boolean; event?: EventRecord; error?: string } {
+  ): Promise<{ success: boolean; event?: EventRecord; error?: string }> {
     if (actor.role === UserRole.STAFF) {
       return { success: false, error: 'Staff members cannot withdraw events.' };
     }
 
-    const db = getDatabase();
-    const existing = db.prepare('SELECT * FROM events WHERE id = ?').get(eventId) as
-      | {
-          id: string;
-          title: string;
-          status: EventStatus;
-          created_by: string;
-        }
-      | undefined;
+    const existing = await dbAdapter.queryOne<{
+      id: string;
+      title: string;
+      status: EventStatus;
+      created_by: string;
+    }>('SELECT id, title, status, created_by FROM events WHERE id = $1', [eventId]);
 
     if (!existing) {
       return { success: false, error: 'Event not found.' };
@@ -528,11 +531,14 @@ export class EventService {
     }
 
     const now = new Date().toISOString();
-    db.prepare(`
+    await dbAdapter.execute(
+      `
       UPDATE events
-      SET status = ?, updated_at = ?
-      WHERE id = ?
-    `).run(EventStatus.DRAFT, now, eventId);
+      SET status = $1, updated_at = $2
+      WHERE id = $3
+      `,
+      [EventStatus.DRAFT, now, eventId]
+    );
 
     auditService.log({
       actorId: actor.id,
@@ -547,31 +553,28 @@ export class EventService {
       },
     });
 
-    const updated = this.getEventById(eventId, actor);
+    const updated = await this.getEventById(eventId, actor);
     return { success: true, event: updated || undefined };
   }
 
   /**
    * Super Admin approves event: PENDING_APPROVAL -> APPROVED
    */
-  public approveEvent(
+  public async approveEvent(
     eventId: string,
     actor: SafeUser,
     ipAddress?: string,
     userAgent?: string
-  ): { success: boolean; event?: EventRecord; error?: string } {
+  ): Promise<{ success: boolean; event?: EventRecord; error?: string }> {
     if (actor.role !== UserRole.SUPER_ADMIN) {
       return { success: false, error: 'Only Super Administrators are authorized to approve events.' };
     }
 
-    const db = getDatabase();
-    const existing = db.prepare('SELECT * FROM events WHERE id = ?').get(eventId) as
-      | {
-          id: string;
-          title: string;
-          status: EventStatus;
-        }
-      | undefined;
+    const existing = await dbAdapter.queryOne<{
+      id: string;
+      title: string;
+      status: EventStatus;
+    }>('SELECT id, title, status FROM events WHERE id = $1', [eventId]);
 
     if (!existing) {
       return { success: false, error: 'Event not found.' };
@@ -585,11 +588,14 @@ export class EventService {
     }
 
     const now = new Date().toISOString();
-    db.prepare(`
+    await dbAdapter.execute(
+      `
       UPDATE events
-      SET status = ?, approved_by = ?, approved_at = ?, rejection_reason = NULL, updated_at = ?
-      WHERE id = ?
-    `).run(EventStatus.APPROVED, actor.id, now, now, eventId);
+      SET status = $1, approved_by = $2, approved_at = $3, rejection_reason = NULL, updated_at = $4
+      WHERE id = $5
+      `,
+      [EventStatus.APPROVED, actor.id, now, now, eventId]
+    );
 
     auditService.log({
       actorId: actor.id,
@@ -606,20 +612,20 @@ export class EventService {
       },
     });
 
-    const updated = this.getEventById(eventId, actor);
+    const updated = await this.getEventById(eventId, actor);
     return { success: true, event: updated || undefined };
   }
 
   /**
    * Super Admin rejects event: PENDING_APPROVAL -> REJECTED (requires reason)
    */
-  public rejectEvent(
+  public async rejectEvent(
     eventId: string,
     actor: SafeUser,
     reason: string,
     ipAddress?: string,
     userAgent?: string
-  ): { success: boolean; event?: EventRecord; error?: string } {
+  ): Promise<{ success: boolean; event?: EventRecord; error?: string }> {
     if (actor.role !== UserRole.SUPER_ADMIN) {
       return { success: false, error: 'Only Super Administrators are authorized to reject events.' };
     }
@@ -632,14 +638,11 @@ export class EventService {
       };
     }
 
-    const db = getDatabase();
-    const existing = db.prepare('SELECT * FROM events WHERE id = ?').get(eventId) as
-      | {
-          id: string;
-          title: string;
-          status: EventStatus;
-        }
-      | undefined;
+    const existing = await dbAdapter.queryOne<{
+      id: string;
+      title: string;
+      status: EventStatus;
+    }>('SELECT id, title, status FROM events WHERE id = $1', [eventId]);
 
     if (!existing) {
       return { success: false, error: 'Event not found.' };
@@ -653,11 +656,14 @@ export class EventService {
     }
 
     const now = new Date().toISOString();
-    db.prepare(`
+    await dbAdapter.execute(
+      `
       UPDATE events
-      SET status = ?, approved_by = ?, approved_at = ?, rejection_reason = ?, updated_at = ?
-      WHERE id = ?
-    `).run(EventStatus.REJECTED, actor.id, now, trimmedReason, now, eventId);
+      SET status = $1, approved_by = $2, approved_at = $3, rejection_reason = $4, updated_at = $5
+      WHERE id = $6
+      `,
+      [EventStatus.REJECTED, actor.id, now, trimmedReason, now, eventId]
+    );
 
     auditService.log({
       actorId: actor.id,
@@ -675,32 +681,29 @@ export class EventService {
       },
     });
 
-    const updated = this.getEventById(eventId, actor);
+    const updated = await this.getEventById(eventId, actor);
     return { success: true, event: updated || undefined };
   }
 
   /**
    * Cancel event: DRAFT / PENDING_APPROVAL / APPROVED -> CANCELLED
    */
-  public cancelEvent(
+  public async cancelEvent(
     eventId: string,
     actor: SafeUser,
     ipAddress?: string,
     userAgent?: string
-  ): { success: boolean; event?: EventRecord; error?: string } {
+  ): Promise<{ success: boolean; event?: EventRecord; error?: string }> {
     if (actor.role === UserRole.STAFF) {
       return { success: false, error: 'Staff members cannot cancel events.' };
     }
 
-    const db = getDatabase();
-    const existing = db.prepare('SELECT * FROM events WHERE id = ?').get(eventId) as
-      | {
-          id: string;
-          title: string;
-          status: EventStatus;
-          created_by: string;
-        }
-      | undefined;
+    const existing = await dbAdapter.queryOne<{
+      id: string;
+      title: string;
+      status: EventStatus;
+      created_by: string;
+    }>('SELECT id, title, status, created_by FROM events WHERE id = $1', [eventId]);
 
     if (!existing) {
       return { success: false, error: 'Event not found.' };
@@ -719,11 +722,14 @@ export class EventService {
     }
 
     const now = new Date().toISOString();
-    db.prepare(`
+    await dbAdapter.execute(
+      `
       UPDATE events
-      SET status = ?, updated_at = ?
-      WHERE id = ?
-    `).run(EventStatus.CANCELLED, now, eventId);
+      SET status = $1, updated_at = $2
+      WHERE id = $3
+      `,
+      [EventStatus.CANCELLED, now, eventId]
+    );
 
     auditService.log({
       actorId: actor.id,
@@ -738,7 +744,7 @@ export class EventService {
       },
     });
 
-    const updated = this.getEventById(eventId, actor);
+    const updated = await this.getEventById(eventId, actor);
     return { success: true, event: updated || undefined };
   }
 }

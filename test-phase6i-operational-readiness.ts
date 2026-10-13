@@ -152,6 +152,9 @@ async function runPhase6ITests() {
 
   console.log('\n--- 5. CONCURRENT ACCESS & TRANSACTION SEMANTICS UNDER LOAD ---');
   {
+    // Clean up test dates to ensure idempotency across multiple test runs
+    db.prepare("DELETE FROM attendance WHERE staff_id = ? AND date LIKE '2030-%'").run(staff.id);
+
     // Test concurrent writes during WAL mode with a valid staff user
     const runPromises = Array.from({ length: 5 }, async (_, i) => {
       return attendanceService.checkIn({

@@ -1,4 +1,4 @@
-import { getDatabase } from '../db/index.ts';
+import { dbAdapter } from '../db/adapter.ts';
 import { generateId, hashPassword } from '../utils/crypto.ts';
 import { auditService } from './audit.service.ts';
 import { authService } from './auth.service.ts';
@@ -112,13 +112,13 @@ export class AdminService {
   /**
    * Retrieves full Today Overview dashboard metrics and attendance rows
    */
-  public getDashboardSummary(customDate?: string): AdminDashboardSummary {
-    const db = getDatabase();
+  public async getDashboardSummary(customDate?: string): Promise<AdminDashboardSummary> {
     const todayDate = customDate || getTodayDateString();
     const serverTime = new Date().toISOString();
 
     // Query all active staff accounts with today's attendance record via LEFT JOIN
-    const rows = (db.prepare(`
+    const rows = await dbAdapter.query<RawTodayRow>(
+      `
       SELECT 
         u.id AS staff_id,
         u.first_name,
@@ -135,19 +135,23 @@ export class AdminService {
         a.check_out_verification_method,
         a.status AS attendance_status
       FROM users u
-      LEFT JOIN attendance a ON a.staff_id = u.id AND a.date = ?
+      LEFT JOIN attendance a ON a.staff_id = u.id AND a.date = $1
       WHERE u.role = 'STAFF' AND u.status = 'ACTIVE'
       ORDER BY u.last_name ASC, u.first_name ASC
-    `).all(todayDate) as unknown) as RawTodayRow[];
+      `,
+      [todayDate]
+    );
 
     // Count all staff accounts in system
-    const totalStaffRow = db.prepare(`
+    const totalStaffRow = await dbAdapter.queryOne<{ total_staff: number; active_staff: number }>(
+      `
       SELECT 
         COUNT(*) AS total_staff,
         SUM(CASE WHEN status = 'ACTIVE' THEN 1 ELSE 0 END) AS active_staff
       FROM users
       WHERE role = 'STAFF'
-    `).get() as { total_staff: number; active_staff: number };
+      `
+    );
 
     const activeStaffCount = totalStaffRow?.active_staff || 0;
     const totalStaffCount = totalStaffRow?.total_staff || 0;
@@ -216,27 +220,27 @@ export class AdminService {
   /**
    * List staff members with search, status, and role filters
    */
-  public listStaff(filters?: {
+  public async listStaff(filters?: {
     search?: string;
     status?: UserStatus | string;
     role?: UserRole | string;
-  }): StaffListItem[] {
-    const db = getDatabase();
+  }): Promise<StaffListItem[]> {
     const todayDate = getTodayDateString();
 
     let query = `
       SELECT 
         u.id, u.email, u.first_name, u.last_name, u.phone, u.department, u.role, u.status, u.created_at,
         (SELECT COUNT(*) FROM attendance WHERE staff_id = u.id AND check_in IS NOT NULL) AS total_attended_days,
-        (SELECT a.check_in FROM attendance a WHERE a.staff_id = u.id AND a.date = ?) AS today_check_in,
-        (SELECT a.check_out FROM attendance a WHERE a.staff_id = u.id AND a.date = ?) AS today_check_out
+        (SELECT a.check_in FROM attendance a WHERE a.staff_id = u.id AND a.date = $1) AS today_check_in,
+        (SELECT a.check_out FROM attendance a WHERE a.staff_id = u.id AND a.date = $2) AS today_check_out
       FROM users u
       WHERE 1=1
     `;
     const params: (string | number | null)[] = [todayDate, todayDate];
+    let pIdx = 3;
 
     if (filters?.role) {
-      query += ` AND u.role = ?`;
+      query += ` AND u.role = $${pIdx++}`;
       params.push(filters.role);
     } else {
       // By default list STAFF and ADMIN (or all users)
@@ -244,19 +248,20 @@ export class AdminService {
     }
 
     if (filters?.status) {
-      query += ` AND u.status = ?`;
+      query += ` AND u.status = $${pIdx++}`;
       params.push(filters.status);
     }
 
     if (filters?.search && filters.search.trim()) {
       const term = `%${filters.search.trim()}%`;
-      query += ` AND (u.first_name LIKE ? OR u.last_name LIKE ? OR u.email LIKE ? OR u.department LIKE ?)`;
+      query += ` AND (u.first_name LIKE $${pIdx} OR u.last_name LIKE $${pIdx + 1} OR u.email LIKE $${pIdx + 2} OR u.department LIKE $${pIdx + 3})`;
+      pIdx += 4;
       params.push(term, term, term, term);
     }
 
     query += ` ORDER BY u.created_at DESC`;
 
-    const rows = (db.prepare(query).all(...params) as unknown) as Array<{
+    const rows = await dbAdapter.query<Array<{
       id: string;
       email: string;
       first_name: string;
@@ -269,7 +274,7 @@ export class AdminService {
       total_attended_days: number;
       today_check_in: string | null;
       today_check_out: string | null;
-    }>;
+    }>[number]>(query, params);
 
     return rows.map((r) => {
       let todayStatus: 'NOT_CHECKED_IN' | 'CHECKED_IN' | 'CHECKED_OUT' = 'NOT_CHECKED_IN';
@@ -296,34 +301,32 @@ export class AdminService {
   /**
    * Get detailed profile & historical attendance for a staff member
    */
-  public getStaffById(staffId: string): StaffDetailResponse | null {
-    const db = getDatabase();
-
-    const user = (db.prepare(`
+  public async getStaffById(staffId: string): Promise<StaffDetailResponse | null> {
+    const user = await dbAdapter.queryOne<RawUserRow>(
+      `
       SELECT id, email, first_name, last_name, phone, department, role, status, created_at, updated_at
       FROM users
-      WHERE id = ?
-    `).get(staffId) as unknown) as RawUserRow | undefined;
+      WHERE id = $1
+      `,
+      [staffId]
+    );
 
     if (!user) {
       return null;
     }
 
-    const stats = (db.prepare(`
+    const stats = await dbAdapter.queryOne<{ total_attended: number; total_checked_out: number }>(
+      `
       SELECT 
         COUNT(CASE WHEN check_in IS NOT NULL THEN 1 END) AS total_attended,
         COUNT(CASE WHEN check_out IS NOT NULL THEN 1 END) AS total_checked_out
       FROM attendance
-      WHERE staff_id = ?
-    `).get(staffId) as unknown) as { total_attended: number; total_checked_out: number };
+      WHERE staff_id = $1
+      `,
+      [staffId]
+    );
 
-    const recentAttendanceRows = (db.prepare(`
-      SELECT id, date, check_in, check_out, check_in_ip, check_in_verification_method, status
-      FROM attendance
-      WHERE staff_id = ?
-      ORDER BY date DESC, created_at DESC
-      LIMIT 15
-    `).all(staffId) as unknown) as Array<{
+    const recentAttendanceRows = await dbAdapter.query<{
       id: string;
       date: string;
       check_in: string | null;
@@ -331,7 +334,16 @@ export class AdminService {
       check_in_ip: string | null;
       check_in_verification_method: string | null;
       status: string;
-    }>;
+    }>(
+      `
+      SELECT id, date, check_in, check_out, check_in_ip, check_in_verification_method, status
+      FROM attendance
+      WHERE staff_id = $1
+      ORDER BY date DESC, created_at DESC
+      LIMIT 15
+      `,
+      [staffId]
+    );
 
     const recentAttendance = recentAttendanceRows.map((r) => {
       const duration = calculateWorkingDuration(r.check_in, r.check_out);
@@ -393,7 +405,6 @@ export class AdminService {
     errorCode?: ApiErrorCode | string;
     errorMessage?: string;
   }> {
-    const db = getDatabase();
     const firstName = (data.firstName || '').trim();
     const lastName = (data.lastName || '').trim();
     const email = (data.email || '').trim().toLowerCase();
@@ -450,7 +461,10 @@ export class AdminService {
     }
 
     // 3. Duplicate Email Check
-    const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+    const existing = await dbAdapter.queryOne<{ id: string }>(
+      'SELECT id FROM users WHERE LOWER(email) = LOWER($1)',
+      [email]
+    );
     if (existing) {
       return {
         success: false,
@@ -465,22 +479,25 @@ export class AdminService {
     const now = new Date().toISOString();
 
     try {
-      db.prepare(`
+      await dbAdapter.execute(
+        `
         INSERT INTO users (
           id, email, password_hash, first_name, last_name, phone, department, role, status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        id,
-        email,
-        passwordHash,
-        firstName,
-        lastName,
-        phone,
-        department,
-        role,
-        status,
-        now,
-        now
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        `,
+        [
+          id,
+          email,
+          passwordHash,
+          firstName,
+          lastName,
+          phone,
+          department,
+          role,
+          status,
+          now,
+          now,
+        ]
       );
 
       // 5. Immutable Audit Log (strictly ZERO plaintext passwords or hashes)
@@ -526,7 +543,7 @@ export class AdminService {
   /**
    * Update permitted staff profile fields with privilege protection
    */
-  public updateStaff(
+  public async updateStaff(
     actor: SafeUser,
     staffId: string,
     data: {
@@ -539,19 +556,20 @@ export class AdminService {
     },
     ipAddress?: string,
     userAgent?: string
-  ): {
+  ): Promise<{
     success: boolean;
     user?: SafeUser;
     errorCode?: ApiErrorCode | string;
     errorMessage?: string;
-  } {
-    const db = getDatabase();
-
-    const existing = (db.prepare(`
+  }> {
+    const existing = await dbAdapter.queryOne<RawUserRow>(
+      `
       SELECT id, email, first_name, last_name, phone, department, role, status, created_at, updated_at
       FROM users
-      WHERE id = ?
-    `).get(staffId) as unknown) as RawUserRow | undefined;
+      WHERE id = $1
+      `,
+      [staffId]
+    );
 
     if (!existing) {
       return {
@@ -615,7 +633,10 @@ export class AdminService {
       }
 
       // Check duplicate
-      const duplicate = db.prepare('SELECT id FROM users WHERE email = ? AND id != ?').get(newEmail, staffId);
+      const duplicate = await dbAdapter.queryOne<{ id: string }>(
+        'SELECT id FROM users WHERE LOWER(email) = LOWER($1) AND id != $2',
+        [newEmail, staffId]
+      );
       if (duplicate) {
         return {
           success: false,
@@ -636,24 +657,27 @@ export class AdminService {
     const now = new Date().toISOString();
 
     try {
-      db.prepare(`
+      await dbAdapter.execute(
+        `
         UPDATE users
-        SET first_name = ?, last_name = ?, email = ?, phone = ?, department = ?, role = ?, updated_at = ?
-        WHERE id = ?
-      `).run(
-        newFirstName,
-        newLastName,
-        newEmail,
-        newPhone,
-        newDepartment,
-        newRole,
-        now,
-        staffId
+        SET first_name = $1, last_name = $2, email = $3, phone = $4, department = $5, role = $6, updated_at = $7
+        WHERE id = $8
+        `,
+        [
+          newFirstName,
+          newLastName,
+          newEmail,
+          newPhone,
+          newDepartment,
+          newRole,
+          now,
+          staffId,
+        ]
       );
 
       // If role changed, invalidate user sessions to force re-evaluation of RBAC
       if (newRole !== existing.role) {
-        authService.invalidateAllUserSessions(staffId);
+        await authService.invalidateAllUserSessions(staffId);
       }
 
       const changedFields: string[] = [];
@@ -707,25 +731,26 @@ export class AdminService {
    * Invalidates active sessions upon suspension
    * Preserves all historical attendance records
    */
-  public setStaffStatus(
+  public async setStaffStatus(
     actor: SafeUser,
     staffId: string,
     newStatus: UserStatus,
     ipAddress?: string,
     userAgent?: string
-  ): {
+  ): Promise<{
     success: boolean;
     user?: SafeUser;
     errorCode?: ApiErrorCode | string;
     errorMessage?: string;
-  } {
-    const db = getDatabase();
-
-    const existing = (db.prepare(`
+  }> {
+    const existing = await dbAdapter.queryOne<RawUserRow>(
+      `
       SELECT id, email, first_name, last_name, phone, department, role, status, created_at, updated_at
       FROM users
-      WHERE id = ?
-    `).get(staffId) as unknown) as RawUserRow | undefined;
+      WHERE id = $1
+      `,
+      [staffId]
+    );
 
     if (!existing) {
       return {
@@ -773,15 +798,18 @@ export class AdminService {
     const now = new Date().toISOString();
 
     try {
-      db.prepare(`
+      await dbAdapter.execute(
+        `
         UPDATE users
-        SET status = ?, updated_at = ?
-        WHERE id = ?
-      `).run(newStatus, now, staffId);
+        SET status = $1, updated_at = $2
+        WHERE id = $3
+        `,
+        [newStatus, now, staffId]
+      );
 
       // If suspended or removed, revoke all active sessions immediately
       if (newStatus === UserStatus.SUSPENDED || newStatus === UserStatus.REMOVED) {
-        authService.invalidateAllUserSessions(staffId);
+        await authService.invalidateAllUserSessions(staffId);
       }
 
       // Record audit event

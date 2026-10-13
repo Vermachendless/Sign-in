@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { getDatabase } from '../db/index.ts';
+import { dbAdapter } from '../db/adapter.ts';
 import { generateId } from '../utils/crypto.ts';
 import { auditService } from './audit.service.ts';
 import {
@@ -125,19 +125,15 @@ export class AccessService {
       return { success: false, error: 'Staff members are not authorized to generate access passes.' };
     }
 
-    const db = getDatabase();
-
     // 1. Verify associated event
-    const event = db.prepare('SELECT * FROM events WHERE id = ?').get(eventId) as
-      | {
-          id: string;
-          title: string;
-          location: string;
-          start_at: string;
-          end_at: string;
-          status: string;
-        }
-      | undefined;
+    const event = dbAdapter.queryOne<{
+      id: string;
+      title: string;
+      location: string;
+      start_at: string;
+      end_at: string;
+      status: string;
+    }>('SELECT * FROM events WHERE id = $1', [eventId]);
 
     if (!event) {
       return { success: false, error: 'Event not found.' };
@@ -185,7 +181,7 @@ export class AccessService {
     let displayCode = this.generateDisplayCode('EVT');
     let attempts = 0;
     while (attempts < 5) {
-      const existing = db.prepare('SELECT id FROM access_passes WHERE display_code = ?').get(displayCode);
+      const existing = dbAdapter.queryOne<{ id: string }>('SELECT id FROM access_passes WHERE display_code = $1', [displayCode]);
       if (!existing) break;
       displayCode = this.generateDisplayCode('EVT');
       attempts++;
@@ -195,26 +191,29 @@ export class AccessService {
     const createdAt = nowIso;
 
     try {
-      db.prepare(`
+      dbAdapter.execute(
+        `
         INSERT INTO access_passes (
           id, pass_type, event_id, host_staff_id, token_hash, display_code,
           valid_from, valid_until, status, max_uses, use_count,
           created_by, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
-      `).run(
-        passId,
-        PassType.EVENT,
-        eventId,
-        null,
-        tokenHash,
-        displayCode,
-        validFrom,
-        validUntil,
-        AccessPassStatus.ACTIVE,
-        maxUses,
-        actor.id,
-        createdAt,
-        createdAt
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 0, $11, $12, $13)
+        `,
+        [
+          passId,
+          PassType.EVENT,
+          eventId,
+          null,
+          tokenHash,
+          displayCode,
+          validFrom,
+          validUntil,
+          AccessPassStatus.ACTIVE,
+          maxUses,
+          actor.id,
+          createdAt,
+          createdAt,
+        ]
       );
 
       // Audit log pass creation (Raw token is NEVER logged)
@@ -278,10 +277,11 @@ export class AccessService {
     ipAddress?: string,
     userAgent?: string
   ): { success: boolean; pass?: AccessPassRecord; error?: string } {
-    const db = getDatabase();
-
     // 1. Verify host staff member exists and is active
-    const host = db.prepare('SELECT id, first_name, last_name, department, status FROM users WHERE id = ?').get(hostStaffId) as any;
+    const host = dbAdapter.queryOne<{ id: string; first_name: string; last_name: string; department: string; status: string }>(
+      'SELECT id, first_name, last_name, department, status FROM users WHERE id = $1',
+      [hostStaffId]
+    );
     if (!host) {
       return { success: false, error: 'Host staff member not found.' };
     }
@@ -322,7 +322,7 @@ export class AccessService {
     let displayCode = this.generateDisplayCode('VIS');
     let attempts = 0;
     while (attempts < 5) {
-      const existing = db.prepare('SELECT id FROM access_passes WHERE display_code = ?').get(displayCode);
+      const existing = dbAdapter.queryOne<{ id: string }>('SELECT id FROM access_passes WHERE display_code = $1', [displayCode]);
       if (!existing) break;
       displayCode = this.generateDisplayCode('VIS');
       attempts++;
@@ -332,26 +332,29 @@ export class AccessService {
     const createdAt = nowIso;
 
     try {
-      db.prepare(`
+      dbAdapter.execute(
+        `
         INSERT INTO access_passes (
           id, pass_type, event_id, host_staff_id, token_hash, display_code,
           valid_from, valid_until, status, max_uses, use_count,
           created_by, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
-      `).run(
-        passId,
-        PassType.VISITOR,
-        null,
-        hostStaffId,
-        tokenHash,
-        displayCode,
-        validFrom,
-        validUntil,
-        AccessPassStatus.ACTIVE,
-        maxUses,
-        actor.id,
-        createdAt,
-        createdAt
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 0, $11, $12, $13)
+        `,
+        [
+          passId,
+          PassType.VISITOR,
+          null,
+          hostStaffId,
+          tokenHash,
+          displayCode,
+          validFrom,
+          validUntil,
+          AccessPassStatus.ACTIVE,
+          maxUses,
+          actor.id,
+          createdAt,
+          createdAt,
+        ]
       );
 
       auditService.log({
@@ -402,37 +405,38 @@ export class AccessService {
   /**
    * Retrieves an access pass by ID
    */
-  public getPassById(passId: string): AccessPassRecord | null {
-    const db = getDatabase();
-
-    const row = db.prepare(`
+  public async getPassById(passId: string): Promise<AccessPassRecord | null> {
+    const row = await dbAdapter.queryOne<any>(
+      `
       SELECT 
         ap.id,
-        ap.pass_type as passType,
-        ap.event_id as eventId,
-        ap.host_staff_id as hostStaffId,
-        ap.display_code as displayCode,
-        ap.valid_from as validFrom,
-        ap.valid_until as validUntil,
+        ap.pass_type as "passType",
+        ap.event_id as "eventId",
+        ap.host_staff_id as "hostStaffId",
+        ap.display_code as "displayCode",
+        ap.valid_from as "validFrom",
+        ap.valid_until as "validUntil",
         ap.status,
-        ap.max_uses as maxUses,
-        ap.use_count as useCount,
-        ap.created_by as createdBy,
-        ap.created_at as createdAt,
-        ap.updated_at as updatedAt,
-        ap.revoked_at as revokedAt,
-        ap.revoked_by as revokedBy,
-        ap.revoke_reason as revokeReason,
-        e.title as eventTitle,
-        e.location as eventLocation,
-        (u.first_name || ' ' || u.last_name) as creatorName,
-        (ru.first_name || ' ' || ru.last_name) as revokerName
+        ap.max_uses as "maxUses",
+        ap.use_count as "useCount",
+        ap.created_by as "createdBy",
+        ap.created_at as "createdAt",
+        ap.updated_at as "updatedAt",
+        ap.revoked_at as "revokedAt",
+        ap.revoked_by as "revokedBy",
+        ap.revoke_reason as "revokeReason",
+        e.title as "eventTitle",
+        e.location as "eventLocation",
+        (u.first_name || ' ' || u.last_name) as "creatorName",
+        (ru.first_name || ' ' || ru.last_name) as "revokerName"
       FROM access_passes ap
       LEFT JOIN events e ON ap.event_id = e.id
       LEFT JOIN users u ON ap.created_by = u.id
       LEFT JOIN users ru ON ap.revoked_by = ru.id
-      WHERE ap.id = ?
-    `).get(passId) as unknown as AccessPassRecord | undefined;
+      WHERE ap.id = $1
+      `,
+      [passId]
+    );
 
     if (!row) return null;
 
@@ -458,47 +462,49 @@ export class AccessService {
   /**
    * Lists access passes for an event
    */
-  public listEventAccessPasses(
+  public async listEventAccessPasses(
     eventId: string,
     actor: SafeUser
-  ): { passes: AccessPassRecord[]; total: number } {
+  ): Promise<{ passes: AccessPassRecord[]; total: number }> {
     if (actor.role === UserRole.STAFF) {
       return { passes: [], total: 0 };
     }
 
-    const db = getDatabase();
-    const rows = db.prepare(`
+    const rows = await dbAdapter.query<any>(
+      `
       SELECT 
         ap.id,
-        ap.pass_type as passType,
-        ap.event_id as eventId,
-        ap.host_staff_id as hostStaffId,
-        ap.display_code as displayCode,
-        ap.valid_from as validFrom,
-        ap.valid_until as validUntil,
+        ap.pass_type as "passType",
+        ap.event_id as "eventId",
+        ap.host_staff_id as "hostStaffId",
+        ap.display_code as "displayCode",
+        ap.valid_from as "validFrom",
+        ap.valid_until as "validUntil",
         ap.status,
-        ap.max_uses as maxUses,
-        ap.use_count as useCount,
-        ap.created_by as createdBy,
-        ap.created_at as createdAt,
-        ap.updated_at as updatedAt,
-        ap.revoked_at as revokedAt,
-        ap.revoked_by as revokedBy,
-        ap.revoke_reason as revokeReason,
-        e.title as eventTitle,
-        e.location as eventLocation,
-        (u.first_name || ' ' || u.last_name) as creatorName,
-        (ru.first_name || ' ' || ru.last_name) as revokerName
+        ap.max_uses as "maxUses",
+        ap.use_count as "useCount",
+        ap.created_by as "createdBy",
+        ap.created_at as "createdAt",
+        ap.updated_at as "updatedAt",
+        ap.revoked_at as "revokedAt",
+        ap.revoked_by as "revokedBy",
+        ap.revoke_reason as "revokeReason",
+        e.title as "eventTitle",
+        e.location as "eventLocation",
+        (u.first_name || ' ' || u.last_name) as "creatorName",
+        (ru.first_name || ' ' || ru.last_name) as "revokerName"
       FROM access_passes ap
       LEFT JOIN events e ON ap.event_id = e.id
       LEFT JOIN users u ON ap.created_by = u.id
       LEFT JOIN users ru ON ap.revoked_by = ru.id
-      WHERE ap.event_id = ?
+      WHERE ap.event_id = $1
       ORDER BY ap.created_at DESC
-    `).all(eventId) as unknown as AccessPassRecord[];
+      `,
+      [eventId]
+    );
 
     const now = new Date().toISOString();
-    const formatted = rows.map((row) => {
+    const formatted = (rows || []).map((row) => {
       let effectiveStatus = row.status;
       if (effectiveStatus === AccessPassStatus.ACTIVE) {
         if (now > row.validUntil) {
@@ -521,29 +527,26 @@ export class AccessService {
   /**
    * Revokes an access pass with mandatory reason
    */
-  public revokeAccessPass(
+  public async revokeAccessPass(
     passId: string,
     actor: SafeUser,
     reason: string,
     ipAddress?: string,
     userAgent?: string
-  ): { success: boolean; pass?: AccessPassRecord; error?: string } {
+  ): Promise<{ success: boolean; pass?: AccessPassRecord; error?: string }> {
     const trimmedReason = reason?.trim();
     if (!trimmedReason || trimmedReason.length < 3) {
       return { success: false, error: 'A revocation reason is required (minimum 3 characters).' };
     }
 
-    const db = getDatabase();
-    const pass = db.prepare('SELECT * FROM access_passes WHERE id = ?').get(passId) as
-      | {
-          id: string;
-          status: string;
-          display_code: string;
-          pass_type: string;
-          host_staff_id: string | null;
-          created_by: string;
-        }
-      | undefined;
+    const pass = await dbAdapter.queryOne<{
+      id: string;
+      status: string;
+      display_code: string;
+      pass_type: string;
+      host_staff_id: string | null;
+      created_by: string;
+    }>('SELECT id, status, display_code, pass_type, host_staff_id, created_by FROM access_passes WHERE id = $1', [passId]);
 
     if (!pass) {
       return { success: false, error: 'Access pass not found.' };
@@ -563,11 +566,14 @@ export class AccessService {
 
     const now = new Date().toISOString();
     try {
-      db.prepare(`
+      await dbAdapter.execute(
+        `
         UPDATE access_passes
-        SET status = ?, revoked_at = ?, revoked_by = ?, revoke_reason = ?, updated_at = ?
-        WHERE id = ?
-      `).run(AccessPassStatus.REVOKED, now, actor.id, trimmedReason, now, passId);
+        SET status = $1, revoked_at = $2, revoked_by = $3, revoke_reason = $4, updated_at = $5
+        WHERE id = $6
+        `,
+        [AccessPassStatus.REVOKED, now, actor.id, trimmedReason, now, passId]
+      );
 
       auditService.log({
         actorId: actor.id,
@@ -582,7 +588,7 @@ export class AccessService {
         },
       });
 
-      const updated = this.getPassById(passId);
+      const updated = await this.getPassById(passId);
       return { success: true, pass: updated || undefined };
     } catch (err) {
       console.error('[AccessService] revokeAccessPass error:', err);
@@ -594,14 +600,14 @@ export class AccessService {
    * Authoritative server-side access pass verification
    * Normalizes input, checks rate limiting, enforces validity window, event state, and atomic use counting
    */
-  public verifyAccessPass(input: {
+  public async verifyAccessPass(input: {
     code?: string;
     token?: string;
     consumeUse?: boolean;
     ipAddress?: string;
     userAgent?: string;
     actor?: SafeUser | null;
-  }): VerificationResult {
+  }): Promise<VerificationResult> {
     const clientIp = input.ipAddress || 'unknown';
 
     // 1. Rate limiting check per IP
@@ -639,8 +645,6 @@ export class AccessService {
       };
     }
 
-    const db = getDatabase();
-
     // 3. Find corresponding pass
     let passRow:
       | {
@@ -655,22 +659,28 @@ export class AccessService {
           max_uses: number | null;
           use_count: number;
         }
-      | undefined;
+      | null = null;
 
     if (tokenHashToQuery) {
-      passRow = db.prepare(`
+      passRow = await dbAdapter.queryOne<NonNullable<typeof passRow>>(
+        `
         SELECT id, pass_type, event_id, host_staff_id, display_code,
                valid_from, valid_until, status, max_uses, use_count
         FROM access_passes
-        WHERE token_hash = ?
-      `).get(tokenHashToQuery) as typeof passRow;
+        WHERE token_hash = $1
+        `,
+        [tokenHashToQuery]
+      );
     } else if (displayCodeToQuery) {
-      passRow = db.prepare(`
+      passRow = await dbAdapter.queryOne<NonNullable<typeof passRow>>(
+        `
         SELECT id, pass_type, event_id, host_staff_id, display_code,
                valid_from, valid_until, status, max_uses, use_count
         FROM access_passes
-        WHERE display_code = ? COLLATE NOCASE
-      `).get(displayCodeToQuery) as typeof passRow;
+        WHERE LOWER(display_code) = LOWER($1)
+        `,
+        [displayCodeToQuery]
+      );
     }
 
     if (!passRow) {
@@ -794,16 +804,14 @@ export class AccessService {
         };
       }
 
-      const event = db.prepare('SELECT id, title, location, start_at, end_at, status FROM events WHERE id = ?').get(passRow.event_id) as
-        | {
-            id: string;
-            title: string;
-            location: string;
-            start_at: string;
-            end_at: string;
-            status: string;
-          }
-        | undefined;
+      const event = await dbAdapter.queryOne<{
+        id: string;
+        title: string;
+        location: string;
+        start_at: string;
+        end_at: string;
+        status: string;
+      }>('SELECT id, title, location, start_at, end_at, status FROM events WHERE id = $1', [passRow.event_id]);
 
       if (!event) {
         auditService.log({
@@ -905,13 +913,16 @@ export class AccessService {
     } | null = null;
 
     if (passRow.pass_type === PassType.VISITOR) {
-      const visit = db.prepare(`
+      const visit = await dbAdapter.queryOne<any>(
+        `
         SELECT vv.id, vv.visitor_full_name, vv.purpose, vv.status, vv.valid_from, vv.valid_until,
                u.first_name as host_first_name, u.last_name as host_last_name, u.department as host_department
         FROM visitor_visits vv
         LEFT JOIN users u ON vv.host_staff_id = u.id
-        WHERE vv.access_pass_id = ?
-      `).get(passRow.id) as any;
+        WHERE vv.access_pass_id = $1
+        `,
+        [passRow.id]
+      );
 
       if (visit) {
         if (visit.status === 'CANCELLED') {
@@ -950,19 +961,22 @@ export class AccessService {
     // 8. Atomic use consumption if requested
     let finalUseCount = passRow.use_count;
     if (input.consumeUse) {
-      const updateResult = db.prepare(`
+      const updateResult = await dbAdapter.execute(
+        `
         UPDATE access_passes
         SET use_count = use_count + 1,
             status = CASE WHEN max_uses IS NOT NULL AND use_count + 1 >= max_uses THEN 'EXHAUSTED' ELSE status END,
-            updated_at = ?
-        WHERE id = ?
+            updated_at = $1
+        WHERE id = $2
           AND (max_uses IS NULL OR use_count < max_uses)
           AND status = 'ACTIVE'
-          AND valid_from <= ?
-          AND valid_until >= ?
-      `).run(now, passRow.id, now, now);
+          AND valid_from <= $3
+          AND valid_until >= $4
+        `,
+        [now, passRow.id, now, now]
+      );
 
-      if (updateResult.changes === 0) {
+      if (updateResult.rowCount === 0) {
         // Concurrency safeguard: another request consumed the last use
         auditService.log({
           actorId: input.actor?.id || null,

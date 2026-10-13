@@ -316,19 +316,19 @@ async function runPhase6HIntegrationTests() {
   const tempToken = tempLogin.token!;
   
   // Verify session works initially
-  const validSessionBefore = authService.validateSession(tempToken);
+  const validSessionBefore = await authService.validateSession(tempToken);
   assert(validSessionBefore.valid === true, 'Test A13a: Session initially valid for active staff');
 
   // Suspend staff member -> sessions invalidated
-  adminService.setStaffStatus(superAdmin, tempUser.id, UserStatus.SUSPENDED);
-  const sessionAfterSuspension = authService.validateSession(tempToken);
+  await adminService.setStaffStatus(superAdmin, tempUser.id, UserStatus.SUSPENDED);
+  const sessionAfterSuspension = await authService.validateSession(tempToken);
   assert(
     sessionAfterSuspension.valid === false,
     'Test A13b: Suspended user session is immediately invalidated and rejected'
   );
 
   // Test A14: Client-supplied roles and IPs in request payloads are ignored
-  const validatedUser = authService.validateSession(workerToken);
+  const validatedUser = await authService.validateSession(workerToken);
   assert(
     validatedUser.valid === true && validatedUser.user?.role === UserRole.STAFF,
     'Test A14: User identity and role strictly authoritative from server session'

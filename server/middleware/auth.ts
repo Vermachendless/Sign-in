@@ -31,26 +31,54 @@ export function extractToken(req: Request): string | null {
  * Authentication middleware that verifies session token and ensures user is active.
  * Rejects invalid, expired, or suspended sessions immediately.
  */
-export function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction) {
-  const token = extractToken(req);
+export async function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    const token = extractToken(req);
 
-  if (!token) {
-    return sendError(res, 401, ApiErrorCode.UNAUTHORIZED, 'Authentication required.');
+    if (!token) {
+      return sendError(res, 401, ApiErrorCode.UNAUTHORIZED, 'Authentication required.');
+    }
+
+    const result = await authService.validateSession(token);
+
+    if (!result.valid || !result.user) {
+      const code = result.errorCode || ApiErrorCode.UNAUTHORIZED;
+      const message = result.errorMessage || 'Invalid or expired session.';
+      return sendError(res, 401, code, message);
+    }
+
+    // Attach safe user context and token to request
+    req.user = result.user;
+    req.sessionToken = token;
+
+    next();
+  } catch (error) {
+    console.error('[requireAuth] Authentication error:', error);
+    return sendError(res, 500, ApiErrorCode.INTERNAL_ERROR, 'Authentication service error.');
   }
+}
 
-  const result = authService.validateSession(token);
+/**
+ * Optional authentication middleware: if a token is present, validates it and attaches user,
+ * but allows unauthenticated requests through without error.
+ */
+export async function optionalAuth(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    const token = extractToken(req);
+    if (!token) {
+      return next();
+    }
 
-  if (!result.valid || !result.user) {
-    const code = result.errorCode || ApiErrorCode.UNAUTHORIZED;
-    const message = result.errorMessage || 'Invalid or expired session.';
-    return sendError(res, 401, code, message);
+    const result = await authService.validateSession(token);
+    if (result.valid && result.user) {
+      req.user = result.user;
+      req.sessionToken = token;
+    }
+    next();
+  } catch (error) {
+    console.error('[optionalAuth] Optional authentication error:', error);
+    next();
   }
-
-  // Attach safe user context and token to request
-  req.user = result.user;
-  req.sessionToken = token;
-
-  next();
 }
 
 /**

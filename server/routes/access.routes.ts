@@ -11,7 +11,7 @@ const router = Router();
  * Public / Reception Access Pass Verification Endpoint
  * Validates human-readable code or QR token against authoritative server state
  */
-router.post('/verify', (req: Request, res: Response) => {
+router.post('/verify', async (req: Request, res: Response) => {
   try {
     const { code, token, consume } = req.body || {};
     const { ip: clientIp } = extractClientIp(req);
@@ -21,7 +21,7 @@ router.post('/verify', (req: Request, res: Response) => {
     const authReq = req as AuthenticatedRequest;
     const actor = authReq.user || null;
 
-    const result = accessService.verifyAccessPass({
+    const result = await accessService.verifyAccessPass({
       code,
       token,
       consumeUse: consume !== false, // default to consuming 1 use unless explicitly specified false
@@ -59,14 +59,14 @@ router.post('/verify', (req: Request, res: Response) => {
  * GET /api/access/passes/:id
  * Retrieves pass details (ADMIN and SUPER_ADMIN only)
  */
-router.get('/passes/:id', requireAuth, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.get('/passes/:id', requireAuth, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
     if (!id) {
       return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, 'Access Pass ID is required.');
     }
 
-    const pass = accessService.getPassById(id);
+    const pass = await accessService.getPassById(id);
     if (!pass) {
       return sendError(res, 404, ApiErrorCode.NOT_FOUND, 'Access pass not found.');
     }
@@ -82,7 +82,7 @@ router.get('/passes/:id', requireAuth, requireAdmin, (req: AuthenticatedRequest,
  * POST /api/access/passes/:id/revoke
  * Revokes an active access pass (ADMIN and SUPER_ADMIN only)
  */
-router.post('/passes/:id/revoke', requireAuth, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.post('/passes/:id/revoke', requireAuth, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const actor = req.user!;
     const { id } = req.params;
@@ -99,7 +99,7 @@ router.post('/passes/:id/revoke', requireAuth, requireAdmin, (req: Authenticated
     const { ip: clientIp } = extractClientIp(req);
     const userAgent = req.headers['user-agent'] || 'Unknown';
 
-    const result = accessService.revokeAccessPass(id, actor, reason, clientIp, userAgent);
+    const result = await accessService.revokeAccessPass(id, actor, reason, clientIp, userAgent);
 
     if (!result.success || !result.pass) {
       return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, result.error || 'Failed to revoke pass.');
