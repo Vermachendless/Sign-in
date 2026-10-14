@@ -565,7 +565,7 @@ async function runPhase6bTests() {
 
     const auditActions = ['EVENT_CREATED', 'EVENT_SUBMITTED_FOR_APPROVAL', 'EVENT_APPROVED', 'EVENT_REJECTED', 'EVENT_CANCELLED'];
     for (const act of auditActions) {
-      const logs = auditService.listLogs({ action: act });
+      const logs = await auditService.listLogs({ action: act });
       assert.ok(logs.total >= 1, `Audit log for ${act} was successfully recorded`);
       pass(`Audit log created for action: ${act}`);
     }

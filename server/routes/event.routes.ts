@@ -1,4 +1,4 @@
-import { Router, Response } from 'express';
+import { Router, Response, NextFunction } from 'express';
 import {
   requireAuth,
   requireAdmin,
@@ -20,7 +20,7 @@ router.use(requireAuth);
  * GET /api/events
  * Lists events with server-side role-based access filtering
  */
-router.get('/', (req: AuthenticatedRequest, res: Response) => {
+router.get('/', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const actor = req.user!;
     const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
@@ -28,7 +28,7 @@ router.get('/', (req: AuthenticatedRequest, res: Response) => {
     const status = typeof req.query.status === 'string' ? req.query.status : undefined;
     const search = typeof req.query.search === 'string' ? req.query.search : undefined;
 
-    const result = eventService.listEvents(actor, {
+    const result = await eventService.listEvents(actor, {
       status,
       search,
       page,
@@ -38,6 +38,9 @@ router.get('/', (req: AuthenticatedRequest, res: Response) => {
     return sendSuccess(res, result);
   } catch (error) {
     console.error('[EventRoutes] listEvents error:', error);
+    if (res.headersSent) {
+      return next(error);
+    }
     return sendError(res, 500, ApiErrorCode.INTERNAL_ERROR, 'Failed to retrieve event list.');
   }
 });
@@ -46,7 +49,7 @@ router.get('/', (req: AuthenticatedRequest, res: Response) => {
  * GET /api/events/:id
  * Retrieves single event details with creator and approver details
  */
-router.get('/:id', (req: AuthenticatedRequest, res: Response) => {
+router.get('/:id', async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const actor = req.user!;
     const { id } = req.params;
@@ -55,7 +58,7 @@ router.get('/:id', (req: AuthenticatedRequest, res: Response) => {
       return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, 'Event ID parameter is required.');
     }
 
-    const event = eventService.getEventById(id, actor);
+    const event = await eventService.getEventById(id, actor);
     if (!event) {
       return sendError(res, 404, ApiErrorCode.NOT_FOUND, 'Event not found or access denied.');
     }
@@ -63,6 +66,9 @@ router.get('/:id', (req: AuthenticatedRequest, res: Response) => {
     return sendSuccess(res, event);
   } catch (error) {
     console.error('[EventRoutes] getEvent error:', error);
+    if (res.headersSent) {
+      return next(error);
+    }
     return sendError(res, 500, ApiErrorCode.INTERNAL_ERROR, 'Failed to retrieve event details.');
   }
 });
@@ -71,7 +77,7 @@ router.get('/:id', (req: AuthenticatedRequest, res: Response) => {
  * POST /api/events
  * Creates a new event in DRAFT status (Requires ADMIN or SUPER_ADMIN)
  */
-router.post('/', requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.post('/', requireAdmin, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const actor = req.user!;
     const { title, description, location, startAt, endAt } = req.body || {};
@@ -79,7 +85,7 @@ router.post('/', requireAdmin, (req: AuthenticatedRequest, res: Response) => {
     const { ip: clientIp } = extractClientIp(req);
     const userAgent = req.headers['user-agent'] || 'Unknown';
 
-    const result = eventService.createEvent(
+    const result = await eventService.createEvent(
       actor,
       { title, description, location, startAt, endAt },
       clientIp,
@@ -93,6 +99,9 @@ router.post('/', requireAdmin, (req: AuthenticatedRequest, res: Response) => {
     return sendSuccess(res, result.event, 201);
   } catch (error) {
     console.error('[EventRoutes] createEvent error:', error);
+    if (res.headersSent) {
+      return next(error);
+    }
     return sendError(res, 500, ApiErrorCode.INTERNAL_ERROR, 'Internal error creating event.');
   }
 });
@@ -101,7 +110,7 @@ router.post('/', requireAdmin, (req: AuthenticatedRequest, res: Response) => {
  * PATCH /api/events/:id
  * Updates an event (Requires ADMIN or SUPER_ADMIN)
  */
-router.patch('/:id', requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.patch('/:id', requireAdmin, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const actor = req.user!;
     const { id } = req.params;
@@ -114,7 +123,7 @@ router.patch('/:id', requireAdmin, (req: AuthenticatedRequest, res: Response) =>
     const { ip: clientIp } = extractClientIp(req);
     const userAgent = req.headers['user-agent'] || 'Unknown';
 
-    const result = eventService.updateEvent(
+    const result = await eventService.updateEvent(
       id,
       actor,
       { title, description, location, startAt, endAt },
@@ -129,6 +138,9 @@ router.patch('/:id', requireAdmin, (req: AuthenticatedRequest, res: Response) =>
     return sendSuccess(res, result.event);
   } catch (error) {
     console.error('[EventRoutes] updateEvent error:', error);
+    if (res.headersSent) {
+      return next(error);
+    }
     return sendError(res, 500, ApiErrorCode.INTERNAL_ERROR, 'Internal error updating event.');
   }
 });
@@ -137,7 +149,7 @@ router.patch('/:id', requireAdmin, (req: AuthenticatedRequest, res: Response) =>
  * POST /api/events/:id/submit
  * Submits draft event for Super Admin approval (Requires ADMIN or SUPER_ADMIN)
  */
-router.post('/:id/submit', requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.post('/:id/submit', requireAdmin, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const actor = req.user!;
     const { id } = req.params;
@@ -149,7 +161,7 @@ router.post('/:id/submit', requireAdmin, (req: AuthenticatedRequest, res: Respon
     const { ip: clientIp } = extractClientIp(req);
     const userAgent = req.headers['user-agent'] || 'Unknown';
 
-    const result = eventService.submitEvent(id, actor, clientIp, userAgent);
+    const result = await eventService.submitEvent(id, actor, clientIp, userAgent);
 
     if (!result.success || !result.event) {
       return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, result.error || 'Failed to submit event for approval.');
@@ -158,6 +170,9 @@ router.post('/:id/submit', requireAdmin, (req: AuthenticatedRequest, res: Respon
     return sendSuccess(res, result.event);
   } catch (error) {
     console.error('[EventRoutes] submitEvent error:', error);
+    if (res.headersSent) {
+      return next(error);
+    }
     return sendError(res, 500, ApiErrorCode.INTERNAL_ERROR, 'Internal error submitting event.');
   }
 });
@@ -166,7 +181,7 @@ router.post('/:id/submit', requireAdmin, (req: AuthenticatedRequest, res: Respon
  * POST /api/events/:id/withdraw
  * Withdraws a submitted event back to draft (Requires ADMIN or SUPER_ADMIN)
  */
-router.post('/:id/withdraw', requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.post('/:id/withdraw', requireAdmin, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const actor = req.user!;
     const { id } = req.params;
@@ -178,7 +193,7 @@ router.post('/:id/withdraw', requireAdmin, (req: AuthenticatedRequest, res: Resp
     const { ip: clientIp } = extractClientIp(req);
     const userAgent = req.headers['user-agent'] || 'Unknown';
 
-    const result = eventService.withdrawEvent(id, actor, clientIp, userAgent);
+    const result = await eventService.withdrawEvent(id, actor, clientIp, userAgent);
 
     if (!result.success || !result.event) {
       return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, result.error || 'Failed to withdraw event.');
@@ -187,6 +202,9 @@ router.post('/:id/withdraw', requireAdmin, (req: AuthenticatedRequest, res: Resp
     return sendSuccess(res, result.event);
   } catch (error) {
     console.error('[EventRoutes] withdrawEvent error:', error);
+    if (res.headersSent) {
+      return next(error);
+    }
     return sendError(res, 500, ApiErrorCode.INTERNAL_ERROR, 'Internal error withdrawing event.');
   }
 });
@@ -195,7 +213,7 @@ router.post('/:id/withdraw', requireAdmin, (req: AuthenticatedRequest, res: Resp
  * POST /api/events/:id/approve
  * Approves a pending event (Strictly SUPER_ADMIN only)
  */
-router.post('/:id/approve', requireSuperAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.post('/:id/approve', requireSuperAdmin, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const actor = req.user!;
     const { id } = req.params;
@@ -207,7 +225,7 @@ router.post('/:id/approve', requireSuperAdmin, (req: AuthenticatedRequest, res: 
     const { ip: clientIp } = extractClientIp(req);
     const userAgent = req.headers['user-agent'] || 'Unknown';
 
-    const result = eventService.approveEvent(id, actor, clientIp, userAgent);
+    const result = await eventService.approveEvent(id, actor, clientIp, userAgent);
 
     if (!result.success || !result.event) {
       return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, result.error || 'Failed to approve event.');
@@ -216,6 +234,9 @@ router.post('/:id/approve', requireSuperAdmin, (req: AuthenticatedRequest, res: 
     return sendSuccess(res, result.event);
   } catch (error) {
     console.error('[EventRoutes] approveEvent error:', error);
+    if (res.headersSent) {
+      return next(error);
+    }
     return sendError(res, 500, ApiErrorCode.INTERNAL_ERROR, 'Internal error approving event.');
   }
 });
@@ -224,7 +245,7 @@ router.post('/:id/approve', requireSuperAdmin, (req: AuthenticatedRequest, res: 
  * POST /api/events/:id/reject
  * Rejects a pending event with mandatory reason (Strictly SUPER_ADMIN only)
  */
-router.post('/:id/reject', requireSuperAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.post('/:id/reject', requireSuperAdmin, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const actor = req.user!;
     const { id } = req.params;
@@ -241,7 +262,7 @@ router.post('/:id/reject', requireSuperAdmin, (req: AuthenticatedRequest, res: R
     const { ip: clientIp } = extractClientIp(req);
     const userAgent = req.headers['user-agent'] || 'Unknown';
 
-    const result = eventService.rejectEvent(id, actor, reason, clientIp, userAgent);
+    const result = await eventService.rejectEvent(id, actor, reason, clientIp, userAgent);
 
     if (!result.success || !result.event) {
       return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, result.error || 'Failed to reject event.');
@@ -250,6 +271,9 @@ router.post('/:id/reject', requireSuperAdmin, (req: AuthenticatedRequest, res: R
     return sendSuccess(res, result.event);
   } catch (error) {
     console.error('[EventRoutes] rejectEvent error:', error);
+    if (res.headersSent) {
+      return next(error);
+    }
     return sendError(res, 500, ApiErrorCode.INTERNAL_ERROR, 'Internal error rejecting event.');
   }
 });
@@ -258,7 +282,7 @@ router.post('/:id/reject', requireSuperAdmin, (req: AuthenticatedRequest, res: R
  * POST /api/events/:id/cancel
  * Cancels an event (Creator Admin or SUPER_ADMIN)
  */
-router.post('/:id/cancel', requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.post('/:id/cancel', requireAdmin, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const actor = req.user!;
     const { id } = req.params;
@@ -270,7 +294,7 @@ router.post('/:id/cancel', requireAdmin, (req: AuthenticatedRequest, res: Respon
     const { ip: clientIp } = extractClientIp(req);
     const userAgent = req.headers['user-agent'] || 'Unknown';
 
-    const result = eventService.cancelEvent(id, actor, clientIp, userAgent);
+    const result = await eventService.cancelEvent(id, actor, clientIp, userAgent);
 
     if (!result.success || !result.event) {
       return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, result.error || 'Failed to cancel event.');
@@ -279,6 +303,9 @@ router.post('/:id/cancel', requireAdmin, (req: AuthenticatedRequest, res: Respon
     return sendSuccess(res, result.event);
   } catch (error) {
     console.error('[EventRoutes] cancelEvent error:', error);
+    if (res.headersSent) {
+      return next(error);
+    }
     return sendError(res, 500, ApiErrorCode.INTERNAL_ERROR, 'Internal error cancelling event.');
   }
 });
