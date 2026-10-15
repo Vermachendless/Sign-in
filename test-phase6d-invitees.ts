@@ -48,6 +48,7 @@ async function runPhase6dTests() {
   console.log('================================================================');
 
   const db = getDatabase();
+  (globalThis as any).db = db;
 
   // 1. Database Schema & Table Structure
   console.log('\n--- 1. Database Schema & Table Structure ---');
@@ -119,7 +120,7 @@ async function runPhase6dTests() {
   const endAt = new Date(now.getTime() + 7200 * 1000).toISOString();
 
   // Create Event A (Will be APPROVED)
-  const eventARes = eventService.createEvent(adminUser, {
+  const eventARes = await eventService.createEvent(adminUser, {
     title: 'Phase 6D Annual Gala',
     location: 'Main Ballroom',
     startAt,
@@ -129,38 +130,38 @@ async function runPhase6dTests() {
   const eventA = eventARes.event!;
 
   // Try creating invitee on DRAFT event (MUST BE REJECTED)
-  const draftInviteeRes = inviteeService.createInvitee(eventA.id, adminUser, {
+  const draftInviteeRes = await inviteeService.createInvitee(eventA.id, adminUser, {
     fullName: 'Premature Guest',
   });
   assert(!draftInviteeRes.success, 'Invitee creation on DRAFT event is rejected');
   assert(draftInviteeRes.error?.includes('APPROVED') || false, 'Error mentions event must be APPROVED');
 
   // Submit and Approve Event A
-  eventService.submitEvent(eventA.id, adminUser);
-  const approveRes = eventService.approveEvent(eventA.id, superAdminUser);
+  await eventService.submitEvent(eventA.id, adminUser);
+  const approveRes = await eventService.approveEvent(eventA.id, superAdminUser);
   assert(approveRes.success, 'Event A successfully approved by Super Admin');
 
   // Create Event B (Also APPROVED, to test cross-event protection)
-  const eventBRes = eventService.createEvent(adminUser, {
+  const eventBRes = await eventService.createEvent(adminUser, {
     title: 'Phase 6D Private Symposium',
     location: 'Executive Boardroom',
     startAt,
     endAt,
   });
-  eventService.submitEvent(eventBRes.event!.id, adminUser);
-  eventService.approveEvent(eventBRes.event!.id, superAdminUser);
+  await eventService.submitEvent(eventBRes.event!.id, adminUser);
+  await eventService.approveEvent(eventBRes.event!.id, superAdminUser);
   const eventB = eventBRes.event!;
 
   // 4. Invitee Input Validation & Normalization
   console.log('\n--- 4. Invitee Input Validation & Normalization ---');
   // Missing full name
-  const emptyNameRes = inviteeService.createInvitee(eventA.id, adminUser, {
+  const emptyNameRes = await inviteeService.createInvitee(eventA.id, adminUser, {
     fullName: '   ',
   });
   assert(!emptyNameRes.success, 'Empty full name is rejected');
 
   // Valid Invitee 1
-  const inv1Res = inviteeService.createInvitee(eventA.id, adminUser, {
+  const inv1Res = await inviteeService.createInvitee(eventA.id, adminUser, {
     fullName: '  Dr. Ngozi Okonjo  ',
     email: '  Ngozi.Okonjo@WTO.ORG  ',
     phone: ' +234 801 111 2222 ',
@@ -178,7 +179,7 @@ async function runPhase6dTests() {
   assert(inv1.accessPassId === null, 'Initial access_pass_id is null');
 
   // Duplicate email detection on same event
-  const duplicateEmailRes = inviteeService.createInvitee(eventA.id, adminUser, {
+  const duplicateEmailRes = await inviteeService.createInvitee(eventA.id, adminUser, {
     fullName: 'Different Name Same Email',
     email: 'NGOZI.OKONJO@WTO.ORG',
   });
@@ -186,21 +187,21 @@ async function runPhase6dTests() {
   assert(duplicateEmailRes.status === 409, 'Rejection status code is 409 Conflict');
 
   // Same email on DIFFERENT event (Event B) MUST BE ALLOWED
-  const diffEventEmailRes = inviteeService.createInvitee(eventB.id, adminUser, {
+  const diffEventEmailRes = await inviteeService.createInvitee(eventB.id, adminUser, {
     fullName: 'Dr. Ngozi Okonjo',
     email: 'ngozi.okonjo@wto.org',
   });
   assert(diffEventEmailRes.success, 'Same email on different event is permitted');
 
   // Identical name with different email MUST BE ALLOWED per spec
-  const sameNameRes = inviteeService.createInvitee(eventA.id, adminUser, {
+  const sameNameRes = await inviteeService.createInvitee(eventA.id, adminUser, {
     fullName: 'Dr. Ngozi Okonjo',
     email: 'another.ngozi@example.com',
   });
   assert(sameNameRes.success, 'Identical full name with distinct email is permitted');
 
   // Invitee without email (only name and phone) MUST BE ALLOWED
-  const noEmailRes = inviteeService.createInvitee(eventA.id, adminUser, {
+  const noEmailRes = await inviteeService.createInvitee(eventA.id, adminUser, {
     fullName: 'Hon. Aliko Dangote',
     phone: '+234 802 333 4444',
   });
@@ -209,57 +210,57 @@ async function runPhase6dTests() {
   // 5. Role-Based Access Control (RBAC)
   console.log('\n--- 5. Invitee RBAC Boundaries ---');
   // Staff cannot list invitees
-  const staffList = inviteeService.listInvitees(eventA.id, staffUser);
+  const staffList = await inviteeService.listInvitees(eventA.id, staffUser);
   assert(!staffList.success, 'Staff member cannot list invitees (Forbidden)');
 
   // Staff cannot create invitees
-  const staffCreate = inviteeService.createInvitee(eventA.id, staffUser, {
+  const staffCreate = await inviteeService.createInvitee(eventA.id, staffUser, {
     fullName: 'Staff Guest',
   });
   assert(!staffCreate.success && staffCreate.status === 403, 'Staff member cannot create invitee (403 Forbidden)');
 
   // Staff cannot get invitee
-  const staffGet = inviteeService.getInviteeById(eventA.id, inv1.id, staffUser);
+  const staffGet = await inviteeService.getInviteeById(eventA.id, inv1.id, staffUser);
   assert(!staffGet.success && staffGet.status === 403, 'Staff member cannot view invitee details (403 Forbidden)');
 
   // Staff cannot generate access pass
-  const staffPass = inviteeService.generateInviteeAccessPass(eventA.id, inv1.id, staffUser);
+  const staffPass = await inviteeService.generateInviteeAccessPass(eventA.id, inv1.id, staffUser);
   assert(!staffPass.success && staffPass.status === 403, 'Staff member cannot issue access pass (403 Forbidden)');
 
   // Staff cannot cancel invitee
-  const staffCancel = inviteeService.cancelInvitee(eventA.id, inv1.id, staffUser);
+  const staffCancel = await inviteeService.cancelInvitee(eventA.id, inv1.id, staffUser);
   assert(!staffCancel.success && staffCancel.status === 403, 'Staff member cannot cancel invitee (403 Forbidden)');
 
   // Super Admin CAN manage invitees
-  const superAdminList = inviteeService.listInvitees(eventA.id, superAdminUser);
+  const superAdminList = await inviteeService.listInvitees(eventA.id, superAdminUser);
   assert(superAdminList.success && superAdminList.total >= 3, 'Super Admin can list event invitees');
 
   // 6. Cross-Event Boundary Protection
   console.log('\n--- 6. Cross-Event Boundary Protection ---');
   // Invitee 1 belongs to Event A. Try accessing or modifying Invitee 1 through Event B's routes
-  const crossGet = inviteeService.getInviteeById(eventB.id, inv1.id, adminUser);
+  const crossGet = await inviteeService.getInviteeById(eventB.id, inv1.id, adminUser);
   assert(!crossGet.success && crossGet.status === 403, 'Cross-event retrieval blocked with 403');
 
-  const crossUpdate = inviteeService.updateInvitee(eventB.id, inv1.id, adminUser, {
+  const crossUpdate = await inviteeService.updateInvitee(eventB.id, inv1.id, adminUser, {
     fullName: 'Malicious Update',
   });
   assert(!crossUpdate.success && crossUpdate.status === 403, 'Cross-event update blocked with 403');
 
-  const crossPass = inviteeService.generateInviteeAccessPass(eventB.id, inv1.id, adminUser);
+  const crossPass = await inviteeService.generateInviteeAccessPass(eventB.id, inv1.id, adminUser);
   assert(!crossPass.success && crossPass.status === 403, 'Cross-event pass generation blocked with 403');
 
-  const crossCancel = inviteeService.cancelInvitee(eventB.id, inv1.id, adminUser);
+  const crossCancel = await inviteeService.cancelInvitee(eventB.id, inv1.id, adminUser);
   assert(!crossCancel.success && crossCancel.status === 403, 'Cross-event cancellation blocked with 403');
 
   // Valid update of invitee details
-  const updateRes = inviteeService.updateInvitee(eventA.id, inv1.id, adminUser, {
+  const updateRes = await inviteeService.updateInvitee(eventA.id, inv1.id, adminUser, {
     notes: 'Keynote Speaker (Confirmed VIP)',
   });
   assert(updateRes.success && updateRes.invitee?.notes === 'Keynote Speaker (Confirmed VIP)', 'Invitee notes updated successfully');
 
   // 7. Individual Access Pass Generation & Security
   console.log('\n--- 7. Individual Access Pass Generation & Security ---');
-  const issuePassRes = inviteeService.generateInviteeAccessPass(eventA.id, inv1.id, adminUser);
+  const issuePassRes = await inviteeService.generateInviteeAccessPass(eventA.id, inv1.id, adminUser);
   assert(issuePassRes.success && !!issuePassRes.pass && !!issuePassRes.invitee, 'Individual access pass generated successfully');
 
   const issuedPass = issuePassRes.pass!;
@@ -313,7 +314,7 @@ async function runPhase6dTests() {
   // 10. Pass Verification via Phase 6C Infrastructure
   console.log('\n--- 10. Invitee Access Pass Verification ---');
   accessService.resetRateLimiter();
-  const verifyRes = accessService.verifyAccessPass({
+  const verifyRes = await accessService.verifyAccessPass({
     token: rawToken,
     consumeUse: true,
     ipAddress: '102.129.144.1',
@@ -325,7 +326,7 @@ async function runPhase6dTests() {
   assert(verifyRes.remainingUses === 0, 'Remaining uses is now 0');
 
   // Second use on single-use pass rejected as EXHAUSTED
-  const secondVerify = accessService.verifyAccessPass({
+  const secondVerify = await accessService.verifyAccessPass({
     token: rawToken,
     consumeUse: true,
     ipAddress: '102.129.144.1',
@@ -335,16 +336,16 @@ async function runPhase6dTests() {
   // 11. Revoke Invitee Access Pass
   console.log('\n--- 11. Invitee Access Revocation Workflow ---');
   // Create another invitee and issue access
-  const inv2Res = inviteeService.createInvitee(eventA.id, adminUser, {
+  const inv2Res = await inviteeService.createInvitee(eventA.id, adminUser, {
     fullName: 'Ambassador Amina Mohammed',
     email: 'amina.mohammed@un.org',
   });
   const inv2 = inv2Res.invitee!;
-  const pass2Res = inviteeService.generateInviteeAccessPass(eventA.id, inv2.id, adminUser);
+  const pass2Res = await inviteeService.generateInviteeAccessPass(eventA.id, inv2.id, adminUser);
   const pass2 = pass2Res.pass!;
 
   // Revoke access
-  const revokeRes = inviteeService.revokeInviteeAccess(
+  const revokeRes = await inviteeService.revokeInviteeAccess(
     eventA.id,
     inv2.id,
     adminUser,
@@ -366,16 +367,16 @@ async function runPhase6dTests() {
   // 12. Cancel Invitee Workflow
   console.log('\n--- 12. Cancel Invitee Workflow ---');
   // Create invitee 3 with access pass
-  const inv3Res = inviteeService.createInvitee(eventA.id, adminUser, {
+  const inv3Res = await inviteeService.createInvitee(eventA.id, adminUser, {
     fullName: 'Guest To Cancel',
     email: 'guest.cancel@example.com',
   });
   const inv3 = inv3Res.invitee!;
-  const pass3Res = inviteeService.generateInviteeAccessPass(eventA.id, inv3.id, adminUser);
+  const pass3Res = await inviteeService.generateInviteeAccessPass(eventA.id, inv3.id, adminUser);
   const pass3 = pass3Res.pass!;
 
   // Cancel invitee
-  const cancelRes = inviteeService.cancelInvitee(
+  const cancelRes = await inviteeService.cancelInvitee(
     eventA.id,
     inv3.id,
     adminUser,
@@ -396,7 +397,7 @@ async function runPhase6dTests() {
   assert(pass3InDb.revoke_reason?.includes('Cancelled invitee'), 'Revoke reason documents invitee cancellation');
 
   // Cannot issue pass to cancelled invitee
-  const passAfterCancel = inviteeService.generateInviteeAccessPass(eventA.id, inv3.id, adminUser);
+  const passAfterCancel = await inviteeService.generateInviteeAccessPass(eventA.id, inv3.id, adminUser);
   assert(!passAfterCancel.success, 'Cannot issue access pass to CANCELLED invitee');
 
   // 13. Audit Log Coverage
@@ -413,15 +414,15 @@ async function runPhase6dTests() {
 
   // 14. List & Filtering Verification
   console.log('\n--- 14. Summary & Filter Verification ---');
-  const listResult = inviteeService.listInvitees(eventA.id, adminUser);
+  const listResult = await inviteeService.listInvitees(eventA.id, adminUser);
   assert(listResult.success, 'listInvitees succeeded');
   assert(listResult.summary.total >= 4, `Total invitees count is ${listResult.summary.total}`);
   assert(listResult.summary.cancelled >= 1, `Cancelled count is ${listResult.summary.cancelled}`);
 
-  const filteredByStatus = inviteeService.listInvitees(eventA.id, adminUser, { status: InviteeStatus.CANCELLED });
+  const filteredByStatus = await inviteeService.listInvitees(eventA.id, adminUser, { status: InviteeStatus.CANCELLED });
   assert(filteredByStatus.invitees.every((i) => i.status === InviteeStatus.CANCELLED), 'Status filter returns only CANCELLED invitees');
 
-  const filteredBySearch = inviteeService.listInvitees(eventA.id, adminUser, { search: 'Ngozi' });
+  const filteredBySearch = await inviteeService.listInvitees(eventA.id, adminUser, { search: 'Ngozi' });
   assert(filteredBySearch.invitees.some((i) => i.fullName.includes('Ngozi')), 'Search query filters by full name');
 
   console.log('\n================================================================');

@@ -1,6 +1,8 @@
 import net from 'node:net';
 import { Request } from 'express';
 import { dbAdapter } from '../db/adapter.ts';
+import { getDatabase, getDatabaseEngine } from '../db/index.ts';
+import { isProductionEnvironment } from '../db/postgres.ts';
 import { auditService } from './audit.service.ts';
 import { generateId } from '../utils/crypto.ts';
 import { OfficeNetworkConfig } from '../../src/types/index.ts';
@@ -185,12 +187,14 @@ export function getApprovedOfficeIps(): { envIps: string[]; dbIps: string[]; all
     }
   } else {
     try {
-      const row = dbAdapter.queryOne<{ value: string }>(
-        'SELECT value FROM system_settings WHERE key = $1',
-        ['approvedOfficeIPs']
-      );
-      if (row && typeof row === 'object' && 'value' in row && typeof (row as any).value === 'string') {
-        const parsedIps = parseOfficeIpsSetting((row as any).value);
+      let rowValue: string | null = null;
+      if (!isProductionEnvironment() && getDatabaseEngine() !== 'postgres') {
+        const db = getDatabase();
+        const row = db.prepare('SELECT value FROM system_settings WHERE key = ?').get('approvedOfficeIPs') as any;
+        rowValue = row?.value || null;
+      }
+      if (rowValue) {
+        const parsedIps = parseOfficeIpsSetting(rowValue);
         cachedDbOfficeIps = parsedIps;
         for (const ip of parsedIps) {
           dbIps.push(ip);

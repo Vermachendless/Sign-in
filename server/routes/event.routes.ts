@@ -314,7 +314,7 @@ router.post('/:id/cancel', requireAdmin, async (req: AuthenticatedRequest, res: 
  * POST /api/events/:id/access-passes
  * Generates an event access pass for an APPROVED event (ADMIN and SUPER_ADMIN only)
  */
-router.post('/:id/access-passes', requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.post('/:id/access-passes', requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const actor = req.user!;
     const { id } = req.params;
@@ -327,7 +327,7 @@ router.post('/:id/access-passes', requireAdmin, (req: AuthenticatedRequest, res:
     const { ip: clientIp } = extractClientIp(req);
     const userAgent = req.headers['user-agent'] || 'Unknown';
 
-    const result = accessService.createEventAccessPass(
+    const result = await accessService.createEventAccessPass(
       actor,
       id,
       { maxUses, validFrom, validUntil },
@@ -375,7 +375,7 @@ router.get('/:id/access-passes', requireAdmin, (req: AuthenticatedRequest, res: 
  * GET /api/events/:eventId/invitees
  * Lists invitees for an event with search, status filtering, and summary metrics (ADMIN and SUPER_ADMIN only)
  */
-router.get('/:eventId/invitees', requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.get('/:eventId/invitees', requireAdmin, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const actor = req.user!;
     const { eventId } = req.params;
@@ -388,7 +388,7 @@ router.get('/:eventId/invitees', requireAdmin, (req: AuthenticatedRequest, res: 
       return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, 'Event ID parameter is required.');
     }
 
-    const result = inviteeService.listInvitees(eventId, actor, { search, status, page, limit });
+    const result = await inviteeService.listInvitees(eventId, actor, { search, status, page, limit });
     if (!result.success) {
       return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, result.error || 'Failed to list invitees.');
     }
@@ -410,7 +410,7 @@ router.get('/:eventId/invitees', requireAdmin, (req: AuthenticatedRequest, res: 
  * POST /api/events/:eventId/invitees
  * Adds an invitee to an APPROVED event (ADMIN and SUPER_ADMIN only)
  */
-router.post('/:eventId/invitees', requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.post('/:eventId/invitees', requireAdmin, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const actor = req.user!;
     const { eventId } = req.params;
@@ -423,7 +423,7 @@ router.post('/:eventId/invitees', requireAdmin, (req: AuthenticatedRequest, res:
     const { ip: clientIp } = extractClientIp(req);
     const userAgent = req.headers['user-agent'] || 'Unknown';
 
-    const result = inviteeService.createInvitee(
+    const result = await inviteeService.createInvitee(
       eventId,
       actor,
       { fullName, phone, email, organization, notes },
@@ -447,7 +447,7 @@ router.post('/:eventId/invitees', requireAdmin, (req: AuthenticatedRequest, res:
  * GET /api/events/:eventId/invitees/:inviteeId
  * Retrieves single invitee by ID ensuring cross-event protection (ADMIN and SUPER_ADMIN only)
  */
-router.get('/:eventId/invitees/:inviteeId', requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.get('/:eventId/invitees/:inviteeId', requireAdmin, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const actor = req.user!;
     const { eventId, inviteeId } = req.params;
@@ -456,7 +456,7 @@ router.get('/:eventId/invitees/:inviteeId', requireAdmin, (req: AuthenticatedReq
       return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, 'Event ID and Invitee ID parameters are required.');
     }
 
-    const result = inviteeService.getInviteeById(eventId, inviteeId, actor);
+    const result = await inviteeService.getInviteeById(eventId, inviteeId, actor);
     if (!result.success || !result.invitee) {
       const code = result.status === 403 ? ApiErrorCode.FORBIDDEN : ApiErrorCode.NOT_FOUND;
       return sendError(res, result.status || 404, code, result.error || 'Invitee not found.');
@@ -473,7 +473,7 @@ router.get('/:eventId/invitees/:inviteeId', requireAdmin, (req: AuthenticatedReq
  * PATCH /api/events/:eventId/invitees/:inviteeId
  * Updates invitee info (ADMIN and SUPER_ADMIN only)
  */
-router.patch('/:eventId/invitees/:inviteeId', requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.patch('/:eventId/invitees/:inviteeId', requireAdmin, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const actor = req.user!;
     const { eventId, inviteeId } = req.params;
@@ -486,7 +486,7 @@ router.patch('/:eventId/invitees/:inviteeId', requireAdmin, (req: AuthenticatedR
     const { ip: clientIp } = extractClientIp(req);
     const userAgent = req.headers['user-agent'] || 'Unknown';
 
-    const result = inviteeService.updateInvitee(
+    const result = await inviteeService.updateInvitee(
       eventId,
       inviteeId,
       actor,
@@ -511,7 +511,7 @@ router.patch('/:eventId/invitees/:inviteeId', requireAdmin, (req: AuthenticatedR
  * POST /api/events/:eventId/invitees/:inviteeId/access-pass
  * Generates individual EVENT access pass for an invitee (ADMIN and SUPER_ADMIN only)
  */
-router.post('/:eventId/invitees/:inviteeId/access-pass', requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.post('/:eventId/invitees/:inviteeId/access-pass', requireAdmin, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const actor = req.user!;
     const { eventId, inviteeId } = req.params;
@@ -523,7 +523,7 @@ router.post('/:eventId/invitees/:inviteeId/access-pass', requireAdmin, (req: Aut
     const { ip: clientIp } = extractClientIp(req);
     const userAgent = req.headers['user-agent'] || 'Unknown';
 
-    const result = inviteeService.generateInviteeAccessPass(
+    const result = await inviteeService.generateInviteeAccessPass(
       eventId,
       inviteeId,
       actor,
@@ -546,7 +546,7 @@ router.post('/:eventId/invitees/:inviteeId/access-pass', requireAdmin, (req: Aut
  * POST /api/events/:eventId/invitees/:inviteeId/revoke-access
  * Revokes an invitee's active access pass (ADMIN and SUPER_ADMIN only)
  */
-router.post('/:eventId/invitees/:inviteeId/revoke-access', requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.post('/:eventId/invitees/:inviteeId/revoke-access', requireAdmin, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const actor = req.user!;
     const { eventId, inviteeId } = req.params;
@@ -559,7 +559,7 @@ router.post('/:eventId/invitees/:inviteeId/revoke-access', requireAdmin, (req: A
     const { ip: clientIp } = extractClientIp(req);
     const userAgent = req.headers['user-agent'] || 'Unknown';
 
-    const result = inviteeService.revokeInviteeAccess(
+    const result = await inviteeService.revokeInviteeAccess(
       eventId,
       inviteeId,
       actor,
@@ -583,7 +583,7 @@ router.post('/:eventId/invitees/:inviteeId/revoke-access', requireAdmin, (req: A
  * POST /api/events/:eventId/invitees/:inviteeId/cancel
  * Cancels an invitee and revokes any active pass (ADMIN and SUPER_ADMIN only)
  */
-router.post('/:eventId/invitees/:inviteeId/cancel', requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.post('/:eventId/invitees/:inviteeId/cancel', requireAdmin, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const actor = req.user!;
     const { eventId, inviteeId } = req.params;
@@ -596,7 +596,7 @@ router.post('/:eventId/invitees/:inviteeId/cancel', requireAdmin, (req: Authenti
     const { ip: clientIp } = extractClientIp(req);
     const userAgent = req.headers['user-agent'] || 'Unknown';
 
-    const result = inviteeService.cancelInvitee(
+    const result = await inviteeService.cancelInvitee(
       eventId,
       inviteeId,
       actor,

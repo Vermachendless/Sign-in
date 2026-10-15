@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
-import { dbAdapter } from '../db/adapter.ts';
+import { dbAdapter, type DbAdapter } from '../db/adapter.ts';
+import { getDatabase } from '../db/index.ts';
 import { generateId } from '../utils/crypto.ts';
 import { auditService } from './audit.service.ts';
 import {
@@ -110,7 +111,7 @@ export class AccessService {
   /**
    * Creates an EVENT access pass for an approved event
    */
-  public createEventAccessPass(
+  public async createEventAccessPass(
     actor: SafeUser,
     eventId: string,
     options?: {
@@ -119,14 +120,17 @@ export class AccessService {
       validUntil?: string;
     },
     ipAddress?: string,
-    userAgent?: string
-  ): { success: boolean; pass?: AccessPassRecord; error?: string } {
+    userAgent?: string,
+    txClient?: DbAdapter
+  ): Promise<{ success: boolean; pass?: AccessPassRecord; error?: string }> {
     if (actor.role === UserRole.STAFF) {
       return { success: false, error: 'Staff members are not authorized to generate access passes.' };
     }
 
+    const db = txClient || dbAdapter;
+
     // 1. Verify associated event
-    const event = dbAdapter.queryOne<{
+    const event = await db.queryOne<{
       id: string;
       title: string;
       location: string;
@@ -181,7 +185,7 @@ export class AccessService {
     let displayCode = this.generateDisplayCode('EVT');
     let attempts = 0;
     while (attempts < 5) {
-      const existing = dbAdapter.queryOne<{ id: string }>('SELECT id FROM access_passes WHERE display_code = $1', [displayCode]);
+      const existing = await db.queryOne<{ id: string }>('SELECT id FROM access_passes WHERE display_code = $1', [displayCode]);
       if (!existing) break;
       displayCode = this.generateDisplayCode('EVT');
       attempts++;
@@ -191,7 +195,7 @@ export class AccessService {
     const createdAt = nowIso;
 
     try {
-      dbAdapter.execute(
+      await db.execute(
         `
         INSERT INTO access_passes (
           id, pass_type, event_id, host_staff_id, token_hash, display_code,
@@ -217,7 +221,7 @@ export class AccessService {
       );
 
       // Audit log pass creation (Raw token is NEVER logged)
-      auditService.log({
+      await auditService.log({
         actorId: actor.id,
         action: 'ACCESS_PASS_CREATED',
         ipAddress,
@@ -257,8 +261,11 @@ export class AccessService {
       };
 
       return { success: true, pass: passRecord };
-    } catch (err) {
-      console.error('[AccessService] createEventAccessPass error:', err);
+    } catch (err: any) {
+      console.error('[AccessService] createEventAccessPass error:', err.message || err);
+      if (txClient) {
+        throw err;
+      }
       return { success: false, error: 'Database error creating access pass.' };
     }
   }
@@ -277,11 +284,13 @@ export class AccessService {
     ipAddress?: string,
     userAgent?: string
   ): { success: boolean; pass?: AccessPassRecord; error?: string } {
+    const db = getDatabase();
+
     // 1. Verify host staff member exists and is active
-    const host = dbAdapter.queryOne<{ id: string; first_name: string; last_name: string; department: string; status: string }>(
-      'SELECT id, first_name, last_name, department, status FROM users WHERE id = $1',
-      [hostStaffId]
-    );
+    const host = db.prepare(
+      'SELECT id, first_name, last_name, department, status FROM users WHERE id = ?'
+    ).get(hostStaffId) as { id: string; first_name: string; last_name: string; department: string; status: string } | undefined;
+
     if (!host) {
       return { success: false, error: 'Host staff member not found.' };
     }
@@ -322,7 +331,7 @@ export class AccessService {
     let displayCode = this.generateDisplayCode('VIS');
     let attempts = 0;
     while (attempts < 5) {
-      const existing = dbAdapter.queryOne<{ id: string }>('SELECT id FROM access_passes WHERE display_code = $1', [displayCode]);
+      const existing = db.prepare('SELECT id FROM access_passes WHERE display_code = ?').get(displayCode);
       if (!existing) break;
       displayCode = this.generateDisplayCode('VIS');
       attempts++;
@@ -332,29 +341,26 @@ export class AccessService {
     const createdAt = nowIso;
 
     try {
-      dbAdapter.execute(
-        `
+      db.prepare(`
         INSERT INTO access_passes (
           id, pass_type, event_id, host_staff_id, token_hash, display_code,
           valid_from, valid_until, status, max_uses, use_count,
           created_by, created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 0, $11, $12, $13)
-        `,
-        [
-          passId,
-          PassType.VISITOR,
-          null,
-          hostStaffId,
-          tokenHash,
-          displayCode,
-          validFrom,
-          validUntil,
-          AccessPassStatus.ACTIVE,
-          maxUses,
-          actor.id,
-          createdAt,
-          createdAt,
-        ]
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+      `).run(
+        passId,
+        PassType.VISITOR,
+        null,
+        hostStaffId,
+        tokenHash,
+        displayCode,
+        validFrom,
+        validUntil,
+        AccessPassStatus.ACTIVE,
+        maxUses,
+        actor.id,
+        createdAt,
+        createdAt
       );
 
       auditService.log({
@@ -405,8 +411,9 @@ export class AccessService {
   /**
    * Retrieves an access pass by ID
    */
-  public async getPassById(passId: string): Promise<AccessPassRecord | null> {
-    const row = await dbAdapter.queryOne<any>(
+  public async getPassById(passId: string, txClient?: DbAdapter): Promise<AccessPassRecord | null> {
+    const db = txClient || dbAdapter;
+    const row = await db.queryOne<any>(
       `
       SELECT 
         ap.id,
@@ -532,14 +539,17 @@ export class AccessService {
     actor: SafeUser,
     reason: string,
     ipAddress?: string,
-    userAgent?: string
+    userAgent?: string,
+    txClient?: DbAdapter
   ): Promise<{ success: boolean; pass?: AccessPassRecord; error?: string }> {
     const trimmedReason = reason?.trim();
     if (!trimmedReason || trimmedReason.length < 3) {
       return { success: false, error: 'A revocation reason is required (minimum 3 characters).' };
     }
 
-    const pass = await dbAdapter.queryOne<{
+    const db = txClient || dbAdapter;
+
+    const pass = await db.queryOne<{
       id: string;
       status: string;
       display_code: string;
@@ -566,7 +576,7 @@ export class AccessService {
 
     const now = new Date().toISOString();
     try {
-      await dbAdapter.execute(
+      await db.execute(
         `
         UPDATE access_passes
         SET status = $1, revoked_at = $2, revoked_by = $3, revoke_reason = $4, updated_at = $5
@@ -575,7 +585,7 @@ export class AccessService {
         [AccessPassStatus.REVOKED, now, actor.id, trimmedReason, now, passId]
       );
 
-      auditService.log({
+      await auditService.log({
         actorId: actor.id,
         action: 'ACCESS_PASS_REVOKED',
         ipAddress,
@@ -588,10 +598,13 @@ export class AccessService {
         },
       });
 
-      const updated = await this.getPassById(passId);
+      const updated = await this.getPassById(passId, db);
       return { success: true, pass: updated || undefined };
-    } catch (err) {
-      console.error('[AccessService] revokeAccessPass error:', err);
+    } catch (err: any) {
+      console.error('[AccessService] revokeAccessPass error:', err.message || err);
+      if (txClient) {
+        throw err;
+      }
       return { success: false, error: 'Database error revoking access pass.' };
     }
   }

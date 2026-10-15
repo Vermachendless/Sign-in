@@ -1,4 +1,4 @@
-import { getDatabase } from '../db/index.ts';
+import { dbAdapter, type DbAdapter } from '../db/adapter.ts';
 import { generateId } from '../utils/crypto.ts';
 import { auditService } from './audit.service.ts';
 import { accessService } from './access.service.ts';
@@ -43,9 +43,57 @@ export class InviteeService {
   }
 
   /**
+   * Maps a raw database row from event_invitees (with optional joined access_pass/user fields)
+   * to a clean, strongly-typed EventInviteeRecord.
+   */
+  private mapInviteeRecord(r: any): EventInviteeRecord {
+    const accessPassId = r.accessPassId ?? r.access_pass_id ?? null;
+    let passRecord: AccessPassRecord | null = null;
+    if (accessPassId) {
+      const validFrom = r.passValidFrom ?? r.pass_valid_from ?? '';
+      const validUntil = r.passValidUntil ?? r.pass_valid_until ?? '';
+      passRecord = {
+        id: accessPassId,
+        passType: 'EVENT' as any,
+        eventId: r.eventId ?? r.event_id,
+        displayCode: r.passDisplayCode ?? r.pass_display_code ?? '',
+        validFrom,
+        validUntil,
+        status: (r.passStatus ?? r.pass_status) || AccessPassStatus.ACTIVE,
+        maxUses: r.passMaxUses ?? r.pass_max_uses ?? null,
+        useCount: r.passUseCount ?? r.pass_use_count ?? 0,
+        createdBy: r.invitedBy ?? r.invited_by,
+        createdAt: r.createdAt ?? r.created_at,
+        updatedAt: r.updatedAt ?? r.updated_at,
+        revokedAt: r.passRevokedAt ?? r.pass_revoked_at ?? null,
+        revokeReason: r.passRevokeReason ?? r.pass_revoke_reason ?? null,
+        formattedValidFrom: accessService.formatDateTime(validFrom),
+        formattedValidUntil: accessService.formatDateTime(validUntil),
+      };
+    }
+
+    return {
+      id: r.id,
+      eventId: r.eventId ?? r.event_id,
+      fullName: r.fullName ?? r.full_name,
+      phone: r.phone ?? null,
+      email: r.email ?? null,
+      organization: r.organization ?? null,
+      notes: r.notes ?? null,
+      status: (r.status as InviteeStatus) || InviteeStatus.INVITED,
+      accessPassId,
+      invitedBy: r.invitedBy ?? r.invited_by,
+      createdAt: r.createdAt ?? r.created_at,
+      updatedAt: r.updatedAt ?? r.updated_at,
+      invitedByName: r.invitedByName ?? r.invited_by_name ?? undefined,
+      accessPass: passRecord,
+    };
+  }
+
+  /**
    * Lists invitees for an event with search, status filtering, and summary metrics
    */
-  public listInvitees(
+  public async listInvitees(
     eventId: string,
     actor: SafeUser,
     options?: {
@@ -54,7 +102,7 @@ export class InviteeService {
       page?: number;
       limit?: number;
     }
-  ): {
+  ): Promise<{
     success: boolean;
     invitees: EventInviteeRecord[];
     total: number;
@@ -62,7 +110,7 @@ export class InviteeService {
     limit: number;
     summary: EventInviteesSummary;
     error?: string;
-  } {
+  }> {
     // 1. RBAC Check: STAFF cannot manage invitees
     if (actor.role === UserRole.STAFF) {
       return {
@@ -76,10 +124,11 @@ export class InviteeService {
       };
     }
 
-    const db = getDatabase();
-
     // 2. Verify event exists
-    const event = db.prepare('SELECT id, title FROM events WHERE id = ?').get(eventId);
+    const event = await dbAdapter.queryOne<{ id: string; title: string }>(
+      'SELECT id, title FROM events WHERE id = $1',
+      [eventId]
+    );
     if (!event) {
       return {
         success: false,
@@ -93,68 +142,47 @@ export class InviteeService {
     }
 
     // 3. Compute summary counts for this event
-    const summaryRow = db.prepare(`
+    const summaryRow = await dbAdapter.queryOne<{
+      total?: number;
+      accessIssued?: number;
+      accessissued?: number;
+      cancelled?: number;
+      invited?: number;
+    }>(
+      `
       SELECT 
-        COUNT(*) as total,
-        COUNT(CASE WHEN status = 'ACCESS_ISSUED' THEN 1 END) as accessIssued,
-        COUNT(CASE WHEN status = 'CANCELLED' THEN 1 END) as cancelled,
-        COUNT(CASE WHEN status = 'INVITED' THEN 1 END) as invited
+        COUNT(*) as "total",
+        COUNT(CASE WHEN status = 'ACCESS_ISSUED' THEN 1 END) as "accessIssued",
+        COUNT(CASE WHEN status = 'CANCELLED' THEN 1 END) as "cancelled",
+        COUNT(CASE WHEN status = 'INVITED' THEN 1 END) as "invited"
       FROM event_invitees
-      WHERE event_id = ?
-    `).get(eventId) as { total: number; accessIssued: number; cancelled: number; invited: number };
+      WHERE event_id = $1
+    `,
+      [eventId]
+    );
 
     const summary: EventInviteesSummary = {
       total: Number(summaryRow?.total || 0),
-      accessIssued: Number(summaryRow?.accessIssued || 0),
+      accessIssued: Number(summaryRow?.accessIssued ?? summaryRow?.accessissued ?? 0),
       cancelled: Number(summaryRow?.cancelled || 0),
       invited: Number(summaryRow?.invited || 0),
     };
 
     // 4. Construct filtered query
-    let countSql = 'SELECT COUNT(*) as count FROM event_invitees ei WHERE ei.event_id = ?';
-    let dataSql = `
-      SELECT 
-        ei.id,
-        ei.event_id as eventId,
-        ei.full_name as fullName,
-        ei.phone,
-        ei.email,
-        ei.organization,
-        ei.notes,
-        ei.status,
-        ei.access_pass_id as accessPassId,
-        ei.invited_by as invitedBy,
-        ei.created_at as createdAt,
-        ei.updated_at as updatedAt,
-        (u.first_name || ' ' || u.last_name) as invitedByName,
-        ap.display_code as passDisplayCode,
-        ap.status as passStatus,
-        ap.valid_from as passValidFrom,
-        ap.valid_until as passValidUntil,
-        ap.max_uses as passMaxUses,
-        ap.use_count as passUseCount,
-        ap.revoked_at as passRevokedAt,
-        ap.revoke_reason as passRevokeReason
-      FROM event_invitees ei
-      LEFT JOIN users u ON ei.invited_by = u.id
-      LEFT JOIN access_passes ap ON ei.access_pass_id = ap.id
-      WHERE ei.event_id = ?
-    `;
-
+    let whereClause = 'ei.event_id = $1';
     const params: (string | number)[] = [eventId];
+    let pIdx = 2;
 
     // Status filter
     if (options?.status && Object.values(InviteeStatus).includes(options.status as InviteeStatus)) {
-      countSql += ' AND ei.status = ?';
-      dataSql += ' AND ei.status = ?';
+      whereClause += ` AND ei.status = $${pIdx++}`;
       params.push(options.status);
     }
 
     // Search filter (name, email, organization)
     if (options?.search && options.search.trim()) {
       const term = `%${options.search.trim()}%`;
-      countSql += ' AND (ei.full_name LIKE ? OR ei.email LIKE ? OR ei.organization LIKE ?)';
-      dataSql += ' AND (ei.full_name LIKE ? OR ei.email LIKE ? OR ei.organization LIKE ?)';
+      whereClause += ` AND (ei.full_name LIKE $${pIdx++} OR ei.email LIKE $${pIdx++} OR ei.organization LIKE $${pIdx++})`;
       params.push(term, term, term);
     }
 
@@ -163,54 +191,47 @@ export class InviteeService {
     const limit = Math.min(100, Math.max(1, options?.limit || 20));
     const offset = (page - 1) * limit;
 
-    const countRow = db.prepare(countSql).get(...params) as { count: number };
+    const countSql = `SELECT COUNT(*) as count FROM event_invitees ei WHERE ${whereClause}`;
+    const countRow = await dbAdapter.queryOne<{ count: number }>(countSql, [...params]);
     const total = Number(countRow?.count || 0);
 
-    dataSql += ' ORDER BY ei.created_at DESC LIMIT ? OFFSET ?';
     const dataParams: (string | number)[] = [...params, limit, offset];
+    const limitPlaceholder = `$${pIdx++}`;
+    const offsetPlaceholder = `$${pIdx++}`;
 
-    const rows = db.prepare(dataSql).all(...dataParams) as any[];
+    const dataSql = `
+      SELECT 
+        ei.id,
+        ei.event_id as "eventId",
+        ei.full_name as "fullName",
+        ei.phone,
+        ei.email,
+        ei.organization,
+        ei.notes,
+        ei.status,
+        ei.access_pass_id as "accessPassId",
+        ei.invited_by as "invitedBy",
+        ei.created_at as "createdAt",
+        ei.updated_at as "updatedAt",
+        (u.first_name || ' ' || u.last_name) as "invitedByName",
+        ap.display_code as "passDisplayCode",
+        ap.status as "passStatus",
+        ap.valid_from as "passValidFrom",
+        ap.valid_until as "passValidUntil",
+        ap.max_uses as "passMaxUses",
+        ap.use_count as "passUseCount",
+        ap.revoked_at as "passRevokedAt",
+        ap.revoke_reason as "passRevokeReason"
+      FROM event_invitees ei
+      LEFT JOIN users u ON ei.invited_by = u.id
+      LEFT JOIN access_passes ap ON ei.access_pass_id = ap.id
+      WHERE ${whereClause}
+      ORDER BY ei.created_at DESC
+      LIMIT ${limitPlaceholder} OFFSET ${offsetPlaceholder}
+    `;
 
-    const invitees: EventInviteeRecord[] = rows.map((r) => {
-      let passRecord: AccessPassRecord | null = null;
-      if (r.accessPassId) {
-        passRecord = {
-          id: r.accessPassId,
-          passType: 'EVENT' as any,
-          eventId: r.eventId,
-          displayCode: r.passDisplayCode || '',
-          validFrom: r.passValidFrom || '',
-          validUntil: r.passValidUntil || '',
-          status: r.passStatus || AccessPassStatus.ACTIVE,
-          maxUses: r.passMaxUses,
-          useCount: r.passUseCount || 0,
-          createdBy: r.invitedBy,
-          createdAt: r.createdAt,
-          updatedAt: r.updatedAt,
-          revokedAt: r.passRevokedAt,
-          revokeReason: r.passRevokeReason,
-          formattedValidFrom: accessService.formatDateTime(r.passValidFrom),
-          formattedValidUntil: accessService.formatDateTime(r.passValidUntil),
-        };
-      }
-
-      return {
-        id: r.id,
-        eventId: r.eventId,
-        fullName: r.fullName,
-        phone: r.phone,
-        email: r.email,
-        organization: r.organization,
-        notes: r.notes,
-        status: r.status as InviteeStatus,
-        accessPassId: r.accessPassId,
-        invitedBy: r.invitedBy,
-        createdAt: r.createdAt,
-        updatedAt: r.updatedAt,
-        invitedByName: r.invitedByName,
-        accessPass: passRecord,
-      };
-    });
+    const rows = await dbAdapter.query<any>(dataSql, dataParams);
+    const invitees: EventInviteeRecord[] = rows.map((r) => this.mapInviteeRecord(r));
 
     return {
       success: true,
@@ -225,120 +246,93 @@ export class InviteeService {
   /**
    * Retrieves single invitee by ID ensuring cross-event protection
    */
-  public getInviteeById(
+  public async getInviteeById(
     eventId: string,
     inviteeId: string,
-    actor: SafeUser
-  ): { success: boolean; invitee?: EventInviteeRecord; error?: string; status?: number } {
+    actor: SafeUser,
+    txClient?: DbAdapter
+  ): Promise<{ success: boolean; invitee?: EventInviteeRecord; error?: string; status?: number }> {
     if (actor.role === UserRole.STAFF) {
       return { success: false, error: 'Forbidden: Staff members cannot access invitees.', status: 403 };
     }
 
-    const db = getDatabase();
+    const db = txClient || dbAdapter;
 
     // Cross-event query: verify event_id matches
-    const row = db.prepare(`
+    const row = await db.queryOne<any>(
+      `
       SELECT 
         ei.id,
-        ei.event_id as eventId,
-        ei.full_name as fullName,
+        ei.event_id as "eventId",
+        ei.full_name as "fullName",
         ei.phone,
         ei.email,
         ei.organization,
         ei.notes,
         ei.status,
-        ei.access_pass_id as accessPassId,
-        ei.invited_by as invitedBy,
-        ei.created_at as createdAt,
-        ei.updated_at as updatedAt,
-        (u.first_name || ' ' || u.last_name) as invitedByName,
-        ap.display_code as passDisplayCode,
-        ap.status as passStatus,
-        ap.valid_from as passValidFrom,
-        ap.valid_until as passValidUntil,
-        ap.max_uses as passMaxUses,
-        ap.use_count as passUseCount,
-        ap.revoked_at as passRevokedAt,
-        ap.revoke_reason as passRevokeReason
+        ei.access_pass_id as "accessPassId",
+        ei.invited_by as "invitedBy",
+        ei.created_at as "createdAt",
+        ei.updated_at as "updatedAt",
+        (u.first_name || ' ' || u.last_name) as "invitedByName",
+        ap.display_code as "passDisplayCode",
+        ap.status as "passStatus",
+        ap.valid_from as "passValidFrom",
+        ap.valid_until as "passValidUntil",
+        ap.max_uses as "passMaxUses",
+        ap.use_count as "passUseCount",
+        ap.revoked_at as "passRevokedAt",
+        ap.revoke_reason as "passRevokeReason"
       FROM event_invitees ei
       LEFT JOIN users u ON ei.invited_by = u.id
       LEFT JOIN access_passes ap ON ei.access_pass_id = ap.id
-      WHERE ei.id = ? AND ei.event_id = ?
-    `).get(inviteeId, eventId) as any;
+      WHERE ei.id = $1 AND ei.event_id = $2
+    `,
+      [inviteeId, eventId]
+    );
 
     if (!row) {
       // Check if invitee exists on another event to detect cross-event attempt
-      const other = db.prepare('SELECT event_id FROM event_invitees WHERE id = ?').get(inviteeId);
+      const other = await dbAdapter.queryOne<{ event_id: string }>(
+        'SELECT event_id FROM event_invitees WHERE id = $1',
+        [inviteeId]
+      );
       if (other) {
-        return { success: false, error: 'Cross-event access violation: Invitee does not belong to specified event.', status: 403 };
+        return {
+          success: false,
+          error: 'Cross-event access violation: Invitee does not belong to specified event.',
+          status: 403,
+        };
       }
       return { success: false, error: 'Invitee not found.', status: 404 };
     }
 
-    let passRecord: AccessPassRecord | null = null;
-    if (row.accessPassId) {
-      passRecord = {
-        id: row.accessPassId,
-        passType: 'EVENT' as any,
-        eventId: row.eventId,
-        displayCode: row.passDisplayCode || '',
-        validFrom: row.passValidFrom || '',
-        validUntil: row.passValidUntil || '',
-        status: row.passStatus || AccessPassStatus.ACTIVE,
-        maxUses: row.passMaxUses,
-        useCount: row.passUseCount || 0,
-        createdBy: row.invitedBy,
-        createdAt: row.createdAt,
-        updatedAt: row.updatedAt,
-        revokedAt: row.passRevokedAt,
-        revokeReason: row.passRevokeReason,
-        formattedValidFrom: accessService.formatDateTime(row.passValidFrom),
-        formattedValidUntil: accessService.formatDateTime(row.passValidUntil),
-      };
-    }
-
     return {
       success: true,
-      invitee: {
-        id: row.id,
-        eventId: row.eventId,
-        fullName: row.fullName,
-        phone: row.phone,
-        email: row.email,
-        organization: row.organization,
-        notes: row.notes,
-        status: row.status as InviteeStatus,
-        accessPassId: row.accessPassId,
-        invitedBy: row.invitedBy,
-        createdAt: row.createdAt,
-        updatedAt: row.updatedAt,
-        invitedByName: row.invitedByName,
-        accessPass: passRecord,
-      },
+      invitee: this.mapInviteeRecord(row),
     };
   }
 
   /**
    * Adds an invitee to an APPROVED event
    */
-  public createInvitee(
+  public async createInvitee(
     eventId: string,
     actor: SafeUser,
     input: CreateInviteeInput,
     ipAddress?: string,
     userAgent?: string
-  ): { success: boolean; invitee?: EventInviteeRecord; error?: string; status?: number } {
+  ): Promise<{ success: boolean; invitee?: EventInviteeRecord; error?: string; status?: number }> {
     // 1. RBAC check
     if (actor.role === UserRole.STAFF) {
       return { success: false, error: 'Forbidden: Staff members cannot add invitees.', status: 403 };
     }
 
-    const db = getDatabase();
-
     // 2. Event check: MUST exist and be APPROVED
-    const event = db.prepare('SELECT id, title, status FROM events WHERE id = ?').get(eventId) as
-      | { id: string; title: string; status: string }
-      | undefined;
+    const event = await dbAdapter.queryOne<{ id: string; title: string; status: string }>(
+      'SELECT id, title, status FROM events WHERE id = $1',
+      [eventId]
+    );
 
     if (!event) {
       return { success: false, error: 'Event not found.', status: 404 };
@@ -369,10 +363,13 @@ export class InviteeService {
 
     // 4. Duplicate email detection for non-cancelled invitees in this event
     if (email) {
-      const duplicate = db.prepare(`
+      const duplicate = await dbAdapter.queryOne<{ id: string }>(
+        `
         SELECT id FROM event_invitees 
-        WHERE event_id = ? AND LOWER(email) = LOWER(?) AND status != 'CANCELLED'
-      `).get(eventId, email);
+        WHERE event_id = $1 AND LOWER(email) = LOWER($2) AND status != 'CANCELLED'
+      `,
+        [eventId, email]
+      );
 
       if (duplicate) {
         return {
@@ -388,28 +385,31 @@ export class InviteeService {
     const nowIso = new Date().toISOString();
 
     try {
-      db.prepare(`
+      await dbAdapter.execute(
+        `
         INSERT INTO event_invitees (
           id, event_id, full_name, phone, email, organization, notes,
           status, access_pass_id, invited_by, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        id,
-        eventId,
-        fullName,
-        phone,
-        email,
-        organization,
-        notes,
-        InviteeStatus.INVITED,
-        null,
-        actor.id,
-        nowIso,
-        nowIso
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      `,
+        [
+          id,
+          eventId,
+          fullName,
+          phone,
+          email,
+          organization,
+          notes,
+          InviteeStatus.INVITED,
+          null,
+          actor.id,
+          nowIso,
+          nowIso,
+        ]
       );
 
       // 6. Audit logging (Zero raw credentials/secrets)
-      auditService.log({
+      await auditService.log({
         actorId: actor.id,
         action: 'EVENT_INVITEE_CREATED',
         ipAddress,
@@ -424,7 +424,7 @@ export class InviteeService {
         },
       });
 
-      const result = this.getInviteeById(eventId, id, actor);
+      const result = await this.getInviteeById(eventId, id, actor);
       return { success: true, invitee: result.invitee };
     } catch (err) {
       console.error('[InviteeService] createInvitee error:', err);
@@ -435,24 +435,28 @@ export class InviteeService {
   /**
    * Updates an existing invitee
    */
-  public updateInvitee(
+  public async updateInvitee(
     eventId: string,
     inviteeId: string,
     actor: SafeUser,
     input: UpdateInviteeInput,
     ipAddress?: string,
     userAgent?: string
-  ): { success: boolean; invitee?: EventInviteeRecord; error?: string; status?: number } {
+  ): Promise<{ success: boolean; invitee?: EventInviteeRecord; error?: string; status?: number }> {
     if (actor.role === UserRole.STAFF) {
       return { success: false, error: 'Forbidden: Staff members cannot update invitees.', status: 403 };
     }
 
-    const db = getDatabase();
-
     // Verify invitee belongs to event
-    const existing = db.prepare('SELECT * FROM event_invitees WHERE id = ? AND event_id = ?').get(inviteeId, eventId) as any;
+    const existing = await dbAdapter.queryOne<any>(
+      'SELECT * FROM event_invitees WHERE id = $1 AND event_id = $2',
+      [inviteeId, eventId]
+    );
     if (!existing) {
-      const other = db.prepare('SELECT event_id FROM event_invitees WHERE id = ?').get(inviteeId);
+      const other = await dbAdapter.queryOne<{ event_id: string }>(
+        'SELECT event_id FROM event_invitees WHERE id = $1',
+        [inviteeId]
+      );
       if (other) {
         return { success: false, error: 'Cross-event access violation.', status: 403 };
       }
@@ -470,7 +474,8 @@ export class InviteeService {
 
     const phone = input.phone !== undefined ? this.normalizeString(input.phone) : existing.phone;
     const email = input.email !== undefined ? this.normalizeEmail(input.email) : existing.email;
-    const organization = input.organization !== undefined ? this.normalizeString(input.organization) : existing.organization;
+    const organization =
+      input.organization !== undefined ? this.normalizeString(input.organization) : existing.organization;
     const notes = input.notes !== undefined ? this.normalizeString(input.notes) : existing.notes;
 
     if (email && !this.isValidEmail(email)) {
@@ -479,10 +484,13 @@ export class InviteeService {
 
     // Duplicate email check
     if (email) {
-      const duplicate = db.prepare(`
+      const duplicate = await dbAdapter.queryOne<{ id: string }>(
+        `
         SELECT id FROM event_invitees 
-        WHERE event_id = ? AND LOWER(email) = LOWER(?) AND id != ? AND status != 'CANCELLED'
-      `).get(eventId, email, inviteeId);
+        WHERE event_id = $1 AND LOWER(email) = LOWER($2) AND id != $3 AND status != 'CANCELLED'
+      `,
+        [eventId, email, inviteeId]
+      );
 
       if (duplicate) {
         return {
@@ -496,13 +504,16 @@ export class InviteeService {
     const nowIso = new Date().toISOString();
 
     try {
-      db.prepare(`
+      await dbAdapter.execute(
+        `
         UPDATE event_invitees 
-        SET full_name = ?, phone = ?, email = ?, organization = ?, notes = ?, updated_at = ?
-        WHERE id = ? AND event_id = ?
-      `).run(fullName, phone, email, organization, notes, nowIso, inviteeId, eventId);
+        SET full_name = $1, phone = $2, email = $3, organization = $4, notes = $5, updated_at = $6
+        WHERE id = $7 AND event_id = $8
+      `,
+        [fullName, phone, email, organization, notes, nowIso, inviteeId, eventId]
+      );
 
-      auditService.log({
+      await auditService.log({
         actorId: actor.id,
         action: 'EVENT_INVITEE_UPDATED',
         ipAddress,
@@ -516,7 +527,7 @@ export class InviteeService {
         },
       });
 
-      const updated = this.getInviteeById(eventId, inviteeId, actor);
+      const updated = await this.getInviteeById(eventId, inviteeId, actor);
       return { success: true, invitee: updated.invitee };
     } catch (err) {
       console.error('[InviteeService] updateInvitee error:', err);
@@ -525,275 +536,316 @@ export class InviteeService {
   }
 
   /**
-   * Generates individual access pass for an invitee using Phase 6C infrastructure
+   * Generates individual access pass for an invitee using AccessService
    * Strictly enforces event validity window (event.start_at -> event.end_at) and single use
    */
-  public generateInviteeAccessPass(
+  public async generateInviteeAccessPass(
     eventId: string,
     inviteeId: string,
     actor: SafeUser,
     ipAddress?: string,
     userAgent?: string
-  ): {
+  ): Promise<{
     success: boolean;
     invitee?: EventInviteeRecord;
     pass?: AccessPassRecord;
     error?: string;
     status?: number;
-  } {
+  }> {
     if (actor.role === UserRole.STAFF) {
       return { success: false, error: 'Forbidden: Staff cannot issue access passes.', status: 403 };
     }
 
-    const db = getDatabase();
-
-    // 1. Verify Event
-    const event = db.prepare('SELECT id, title, location, start_at, end_at, status FROM events WHERE id = ?').get(eventId) as
-      | { id: string; title: string; location: string; start_at: string; end_at: string; status: string }
-      | undefined;
-
-    if (!event) {
-      return { success: false, error: 'Event not found.', status: 404 };
-    }
-
-    if (event.status !== EventStatus.APPROVED) {
-      return {
-        success: false,
-        error: `Cannot issue access pass: Event must be APPROVED. Current status is "${event.status}".`,
-        status: 400,
-      };
-    }
-
-    // 2. Verify Invitee and cross-event boundary
-    const invitee = db.prepare('SELECT * FROM event_invitees WHERE id = ? AND event_id = ?').get(inviteeId, eventId) as any;
-    if (!invitee) {
-      const other = db.prepare('SELECT event_id FROM event_invitees WHERE id = ?').get(inviteeId);
-      if (other) {
-        return { success: false, error: 'Cross-event access violation.', status: 403 };
-      }
-      return { success: false, error: 'Invitee not found.', status: 404 };
-    }
-
-    if (invitee.status === InviteeStatus.CANCELLED) {
-      return { success: false, error: 'Cannot issue an access pass for a cancelled invitee.', status: 400 };
-    }
-
-    // 3. Generate individual EVENT access pass via Phase 6C AccessService
-    // Strictly adheres to event.start_at -> event.end_at and maxUses = 1
-    const passResult = accessService.createEventAccessPass(
-      actor,
-      event.id,
-      {
-        validFrom: event.start_at,
-        validUntil: event.end_at,
-        maxUses: 1, // Single-use individual invitee pass
-      },
-      ipAddress,
-      userAgent
-    );
-
-    if (!passResult.success || !passResult.pass) {
-      return {
-        success: false,
-        error: passResult.error || 'Failed to generate access pass.',
-        status: 400,
-      };
-    }
-
-    const nowIso = new Date().toISOString();
-
-    // 4. Update invitee record to link pass and set status to ACCESS_ISSUED
     try {
-      db.prepare(`
-        UPDATE event_invitees 
-        SET access_pass_id = ?, status = ?, updated_at = ?
-        WHERE id = ? AND event_id = ?
-      `).run(passResult.pass.id, InviteeStatus.ACCESS_ISSUED, nowIso, inviteeId, eventId);
+      return await dbAdapter.transaction(async (tx) => {
+        // 1. Verify Event
+        const event = await tx.queryOne<{
+          id: string;
+          title: string;
+          location: string;
+          start_at: string;
+          end_at: string;
+          status: string;
+        }>('SELECT id, title, location, start_at, end_at, status FROM events WHERE id = $1', [eventId]);
 
-      // 5. Audit log (No raw token in metadata)
-      auditService.log({
-        actorId: actor.id,
-        action: 'EVENT_INVITEE_ACCESS_ISSUED',
-        ipAddress,
-        userAgent,
-        metadata: {
-          eventId,
-          eventTitle: event.title,
-          inviteeId,
-          inviteeName: invitee.full_name,
-          passId: passResult.pass.id,
-          displayCode: passResult.pass.displayCode,
-          validFrom: passResult.pass.validFrom,
-          validUntil: passResult.pass.validUntil,
-        },
+        if (!event) {
+          return { success: false, error: 'Event not found.', status: 404 };
+        }
+
+        if (event.status !== EventStatus.APPROVED) {
+          return {
+            success: false,
+            error: `Cannot issue access pass: Event must be APPROVED. Current status is "${event.status}".`,
+            status: 400,
+          };
+        }
+
+        // 2. Verify Invitee and cross-event boundary
+        const invitee = await tx.queryOne<any>(
+          'SELECT * FROM event_invitees WHERE id = $1 AND event_id = $2',
+          [inviteeId, eventId]
+        );
+        if (!invitee) {
+          const other = await tx.queryOne<{ event_id: string }>(
+            'SELECT event_id FROM event_invitees WHERE id = $1',
+            [inviteeId]
+          );
+          if (other) {
+            return { success: false, error: 'Cross-event access violation.', status: 403 };
+          }
+          return { success: false, error: 'Invitee not found.', status: 404 };
+        }
+
+        if (invitee.status === InviteeStatus.CANCELLED) {
+          return { success: false, error: 'Cannot issue an access pass for a cancelled invitee.', status: 400 };
+        }
+
+        // 3. Generate individual EVENT access pass via AccessService participating in tx
+        // Strictly adheres to event.start_at -> event.end_at and maxUses = 1
+        const passResult = await accessService.createEventAccessPass(
+          actor,
+          event.id,
+          {
+            validFrom: event.start_at,
+            validUntil: event.end_at,
+            maxUses: 1, // Single-use individual invitee pass
+          },
+          ipAddress,
+          userAgent,
+          tx
+        );
+
+        if (!passResult.success || !passResult.pass) {
+          throw new Error(passResult.error || 'Failed to generate access pass.');
+        }
+
+        const nowIso = new Date().toISOString();
+
+        // 4. Update invitee record to link pass and set status to ACCESS_ISSUED on tx
+        await tx.execute(
+          `
+          UPDATE event_invitees 
+          SET access_pass_id = $1, status = $2, updated_at = $3
+          WHERE id = $4 AND event_id = $5
+        `,
+          [passResult.pass.id, InviteeStatus.ACCESS_ISSUED, nowIso, inviteeId, eventId]
+        );
+
+        // 5. Audit log (Non-transactional, compliant with AuditLogResult contract; zero raw secrets)
+        await auditService.log({
+          actorId: actor.id,
+          action: 'EVENT_INVITEE_ACCESS_ISSUED',
+          ipAddress,
+          userAgent,
+          metadata: {
+            eventId,
+            eventTitle: event.title,
+            inviteeId,
+            inviteeName: invitee.full_name,
+            passId: passResult.pass.id,
+            displayCode: passResult.pass.displayCode,
+            validFrom: passResult.pass.validFrom,
+            validUntil: passResult.pass.validUntil,
+          },
+        });
+
+        const updatedInvitee = await this.getInviteeById(eventId, inviteeId, actor, tx);
+        return {
+          success: true,
+          invitee: updatedInvitee.invitee,
+          pass: passResult.pass,
+        };
       });
-
-      const updatedInvitee = this.getInviteeById(eventId, inviteeId, actor);
-      return {
-        success: true,
-        invitee: updatedInvitee.invitee,
-        pass: passResult.pass,
-      };
-    } catch (err) {
-      console.error('[InviteeService] generateInviteeAccessPass error:', err);
-      return { success: false, error: 'Database error linking access pass.', status: 500 };
+    } catch (err: any) {
+      console.error('[InviteeService] generateInviteeAccessPass error:', err.message || err);
+      return { success: false, error: err.message || 'Database error linking access pass.', status: 500 };
     }
   }
 
   /**
    * Revokes an invitee's access pass while retaining the historical invitee record
+   * Both access_passes update and event_invitees status update participate in a shared transaction
    */
-  public revokeInviteeAccess(
+  public async revokeInviteeAccess(
     eventId: string,
     inviteeId: string,
     actor: SafeUser,
     reason?: string,
     ipAddress?: string,
     userAgent?: string
-  ): { success: boolean; invitee?: EventInviteeRecord; error?: string; status?: number } {
+  ): Promise<{ success: boolean; invitee?: EventInviteeRecord; error?: string; status?: number }> {
     if (actor.role === UserRole.STAFF) {
       return { success: false, error: 'Forbidden: Staff cannot revoke access.', status: 403 };
     }
 
-    const db = getDatabase();
-
-    // Cross-event verification
-    const invitee = db.prepare('SELECT * FROM event_invitees WHERE id = ? AND event_id = ?').get(inviteeId, eventId) as any;
-    if (!invitee) {
-      const other = db.prepare('SELECT event_id FROM event_invitees WHERE id = ?').get(inviteeId);
-      if (other) {
-        return { success: false, error: 'Cross-event access violation.', status: 403 };
-      }
-      return { success: false, error: 'Invitee not found.', status: 404 };
-    }
-
-    if (!invitee.access_pass_id) {
-      return { success: false, error: 'Invitee does not have an active access pass.', status: 400 };
-    }
-
-    const revokeReason = reason?.trim() || 'Invitee access revoked by administrator';
-
-    // Revoke the pass using Phase 6C revocation
-    const revokeResult = accessService.revokeAccessPass(
-      invitee.access_pass_id,
-      actor,
-      revokeReason,
-      ipAddress,
-      userAgent
-    );
-
-    if (!revokeResult.success) {
-      return { success: false, error: revokeResult.error || 'Failed to revoke access pass.', status: 400 };
-    }
-
-    const nowIso = new Date().toISOString();
-
     try {
-      // Revert status to INVITED while retaining invitee record
-      db.prepare(`
-        UPDATE event_invitees
-        SET status = ?, updated_at = ?
-        WHERE id = ? AND event_id = ?
-      `).run(InviteeStatus.INVITED, nowIso, inviteeId, eventId);
+      return await dbAdapter.transaction(async (tx) => {
+        // Cross-event verification on tx
+        const invitee = await tx.queryOne<any>(
+          'SELECT * FROM event_invitees WHERE id = $1 AND event_id = $2',
+          [inviteeId, eventId]
+        );
+        if (!invitee) {
+          const other = await tx.queryOne<{ event_id: string }>(
+            'SELECT event_id FROM event_invitees WHERE id = $1',
+            [inviteeId]
+          );
+          if (other) {
+            return { success: false, error: 'Cross-event access violation.', status: 403 };
+          }
+          return { success: false, error: 'Invitee not found.', status: 404 };
+        }
 
-      auditService.log({
-        actorId: actor.id,
-        action: 'EVENT_INVITEE_ACCESS_REVOKED',
-        ipAddress,
-        userAgent,
-        metadata: {
-          eventId,
-          inviteeId,
-          inviteeName: invitee.full_name,
-          accessPassId: invitee.access_pass_id,
-          reason: revokeReason,
-        },
+        const accessPassId = invitee.access_pass_id || invitee.accessPassId;
+        if (!accessPassId) {
+          return { success: false, error: 'Invitee does not have an active access pass.', status: 400 };
+        }
+
+        const revokeReason = reason?.trim() || 'Invitee access revoked by administrator';
+
+        // Revoke the pass using AccessService revocation participating in tx
+        const revokeResult = await accessService.revokeAccessPass(
+          accessPassId,
+          actor,
+          revokeReason,
+          ipAddress,
+          userAgent,
+          tx
+        );
+
+        if (!revokeResult.success) {
+          throw new Error(revokeResult.error || 'Failed to revoke access pass.');
+        }
+
+        const nowIso = new Date().toISOString();
+
+        // Revert status to INVITED while retaining invitee record on tx
+        await tx.execute(
+          `
+          UPDATE event_invitees
+          SET status = $1, updated_at = $2
+          WHERE id = $3 AND event_id = $4
+        `,
+          [InviteeStatus.INVITED, nowIso, inviteeId, eventId]
+        );
+
+        await auditService.log({
+          actorId: actor.id,
+          action: 'EVENT_INVITEE_ACCESS_REVOKED',
+          ipAddress,
+          userAgent,
+          metadata: {
+            eventId,
+            inviteeId,
+            inviteeName: invitee.full_name,
+            accessPassId,
+            reason: revokeReason,
+          },
+        });
+
+        const updated = await this.getInviteeById(eventId, inviteeId, actor, tx);
+        return { success: true, invitee: updated.invitee };
       });
-
-      const updated = this.getInviteeById(eventId, inviteeId, actor);
-      return { success: true, invitee: updated.invitee };
-    } catch (err) {
-      console.error('[InviteeService] revokeInviteeAccess error:', err);
-      return { success: false, error: 'Database error updating invitee after revocation.', status: 500 };
+    } catch (err: any) {
+      console.error('[InviteeService] revokeInviteeAccess error:', err.message || err);
+      return { success: false, error: err.message || 'Database error updating invitee after revocation.', status: 500 };
     }
   }
 
   /**
    * Cancels an invitee: changes status to CANCELLED, revokes any active pass, retains record, and audits
+   * Both pass revocation and invitee status update participate in a shared transaction
    */
-  public cancelInvitee(
+  public async cancelInvitee(
     eventId: string,
     inviteeId: string,
     actor: SafeUser,
     reason?: string,
     ipAddress?: string,
     userAgent?: string
-  ): { success: boolean; invitee?: EventInviteeRecord; error?: string; status?: number } {
+  ): Promise<{ success: boolean; invitee?: EventInviteeRecord; error?: string; status?: number }> {
     if (actor.role === UserRole.STAFF) {
       return { success: false, error: 'Forbidden: Staff cannot cancel invitees.', status: 403 };
     }
 
-    const db = getDatabase();
-
-    // Cross-event verification
-    const invitee = db.prepare('SELECT * FROM event_invitees WHERE id = ? AND event_id = ?').get(inviteeId, eventId) as any;
-    if (!invitee) {
-      const other = db.prepare('SELECT event_id FROM event_invitees WHERE id = ?').get(inviteeId);
-      if (other) {
-        return { success: false, error: 'Cross-event access violation.', status: 403 };
-      }
-      return { success: false, error: 'Invitee not found.', status: 404 };
-    }
-
-    if (invitee.status === InviteeStatus.CANCELLED) {
-      return { success: false, error: 'Invitee is already cancelled.', status: 400 };
-    }
-
-    const cancelReason = reason?.trim() || 'Invitee cancelled by administrator';
-
-    // If there is an associated pass that is ACTIVE, revoke it
-    if (invitee.access_pass_id) {
-      const pass = db.prepare('SELECT status FROM access_passes WHERE id = ?').get(invitee.access_pass_id) as any;
-      if (pass && pass.status === AccessPassStatus.ACTIVE) {
-        accessService.revokeAccessPass(
-          invitee.access_pass_id,
-          actor,
-          `Cancelled invitee: ${cancelReason}`,
-          ipAddress,
-          userAgent
-        );
-      }
-    }
-
-    const nowIso = new Date().toISOString();
-
     try {
-      db.prepare(`
-        UPDATE event_invitees
-        SET status = ?, updated_at = ?
-        WHERE id = ? AND event_id = ?
-      `).run(InviteeStatus.CANCELLED, nowIso, inviteeId, eventId);
+      return await dbAdapter.transaction(async (tx) => {
+        // Cross-event verification on tx
+        const invitee = await tx.queryOne<any>(
+          'SELECT * FROM event_invitees WHERE id = $1 AND event_id = $2',
+          [inviteeId, eventId]
+        );
+        if (!invitee) {
+          const other = await tx.queryOne<{ event_id: string }>(
+            'SELECT event_id FROM event_invitees WHERE id = $1',
+            [inviteeId]
+          );
+          if (other) {
+            return { success: false, error: 'Cross-event access violation.', status: 403 };
+          }
+          return { success: false, error: 'Invitee not found.', status: 404 };
+        }
 
-      auditService.log({
-        actorId: actor.id,
-        action: 'EVENT_INVITEE_CANCELLED',
-        ipAddress,
-        userAgent,
-        metadata: {
-          eventId,
-          inviteeId,
-          inviteeName: invitee.full_name,
-          previousStatus: invitee.status,
-          accessPassId: invitee.access_pass_id,
-          reason: cancelReason,
-        },
+        if (invitee.status === InviteeStatus.CANCELLED) {
+          return { success: false, error: 'Invitee is already cancelled.', status: 400 };
+        }
+
+        const cancelReason = reason?.trim() || 'Invitee cancelled by administrator';
+
+        const accessPassId = invitee.access_pass_id || invitee.accessPassId;
+        // If there is an associated pass that is ACTIVE, revoke it on tx
+        if (accessPassId) {
+          const pass = await tx.queryOne<{ status: string }>(
+            'SELECT status FROM access_passes WHERE id = $1',
+            [accessPassId]
+          );
+          if (pass && pass.status === AccessPassStatus.ACTIVE) {
+            const revokeRes = await accessService.revokeAccessPass(
+              accessPassId,
+              actor,
+              `Cancelled invitee: ${cancelReason}`,
+              ipAddress,
+              userAgent,
+              tx
+            );
+            if (!revokeRes.success) {
+              throw new Error(revokeRes.error || 'Failed to revoke active pass during cancellation.');
+            }
+          }
+        }
+
+        const nowIso = new Date().toISOString();
+
+        await tx.execute(
+          `
+          UPDATE event_invitees
+          SET status = $1, updated_at = $2
+          WHERE id = $3 AND event_id = $4
+        `,
+          [InviteeStatus.CANCELLED, nowIso, inviteeId, eventId]
+        );
+
+        await auditService.log({
+          actorId: actor.id,
+          action: 'EVENT_INVITEE_CANCELLED',
+          ipAddress,
+          userAgent,
+          metadata: {
+            eventId,
+            inviteeId,
+            inviteeName: invitee.full_name,
+            previousStatus: invitee.status,
+            accessPassId,
+            reason: cancelReason,
+          },
+        });
+
+        const updated = await this.getInviteeById(eventId, inviteeId, actor, tx);
+        return { success: true, invitee: updated.invitee };
       });
-
-      const updated = this.getInviteeById(eventId, inviteeId, actor);
-      return { success: true, invitee: updated.invitee };
-    } catch (err) {
-      console.error('[InviteeService] cancelInvitee error:', err);
-      return { success: false, error: 'Database error cancelling invitee.', status: 500 };
+    } catch (err: any) {
+      console.error('[InviteeService] cancelInvitee error:', err.message || err);
+      return { success: false, error: err.message || 'Database error cancelling invitee.', status: 500 };
     }
   }
 }
