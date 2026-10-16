@@ -153,7 +153,7 @@ async function runPhase6eTests() {
 
   // Missing visitor full name
   const testVisitDate = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
-  const emptyName = visitorService.createVisit(staffUserA, {
+  const emptyName = await visitorService.createVisit(staffUserA, {
     visitorFullName: '   ',
     visitDate: testVisitDate,
     startTime: '10:00',
@@ -164,7 +164,7 @@ async function runPhase6eTests() {
   // 4. Staff Creation & Automatic Host Scoping
   console.log('\n--- 4. Staff Creation & Host Scoping ---');
   // Staff A tries to pass Staff B's ID as hostStaffId
-  const spoofedHost = visitorService.createVisit(
+  const spoofedHost = await visitorService.createVisit(
     staffUserA,
     {
       visitorFullName: '  Michael Smith  ',
@@ -190,54 +190,54 @@ async function runPhase6eTests() {
   // 5. Cross-User Protection (Staff B cannot access or tamper with Staff A's visit)
   console.log('\n--- 5. Cross-User Protection ---');
   // Staff B tries to GET Staff A's visit
-  const crossGet = visitorService.getVisitById(visitA.id, staffUserB);
+  const crossGet = await visitorService.getVisitById(visitA.id, staffUserB);
   assert(!crossGet.success && crossGet.status === 403, 'Staff B blocked from viewing Staff A visitor (403 Forbidden)');
 
   // Staff B tries to UPDATE Staff A's visit
-  const crossUpdate = visitorService.updateVisit(visitA.id, staffUserB, {
+  const crossUpdate = await visitorService.updateVisit(visitA.id, staffUserB, {
     visitorFullName: 'Hacked Name',
   });
   assert(!crossUpdate.success && crossUpdate.status === 403, 'Staff B blocked from modifying Staff A visitor (403 Forbidden)');
 
   // Staff B tries to GENERATE access pass for Staff A's visit
-  const crossPass = visitorService.generateVisitorAccessPass(visitA.id, staffUserB);
+  const crossPass = await visitorService.generateVisitorAccessPass(visitA.id, staffUserB);
   assert(!crossPass.success && crossPass.status === 403, 'Staff B blocked from issuing access pass for Staff A visitor (403 Forbidden)');
 
   // Staff B tries to CANCEL Staff A's visit
-  const crossCancel = visitorService.cancelVisit(visitA.id, staffUserB);
+  const crossCancel = await visitorService.cancelVisit(visitA.id, staffUserB);
   assert(!crossCancel.success && crossCancel.status === 403, 'Staff B blocked from cancelling Staff A visitor (403 Forbidden)');
 
   // Staff A can view their own visit
-  const selfGet = visitorService.getVisitById(visitA.id, staffUserA);
+  const selfGet = await visitorService.getVisitById(visitA.id, staffUserA);
   assert(selfGet.success && selfGet.visit?.id === visitA.id, 'Staff A can view their own visitor invitation');
 
   // Staff A can update their own pending visit
-  const selfUpdate = visitorService.updateVisit(visitA.id, staffUserA, {
+  const selfUpdate = await visitorService.updateVisit(visitA.id, staffUserA, {
     notes: 'Escort to Meeting Room 3 - Confirmed',
   });
   assert(selfUpdate.success && selfUpdate.visit?.notes === 'Escort to Meeting Room 3 - Confirmed', 'Staff A can update their own pending visitor invitation');
 
   // Staff list scoping: Staff B's list does NOT contain Staff A's visit
-  const staffBList = visitorService.listVisits(staffUserB);
+  const staffBList = await visitorService.listVisits(staffUserB);
   assert(staffBList.visits.every((v) => v.hostStaffId === staffUserB.id), 'Staff B list contains exclusively Staff B records');
   assert(!staffBList.visits.some((v) => v.id === visitA.id), 'Staff A visit is not present in Staff B list');
 
   // 6. Admin & Super Admin Organization-Wide Access
   console.log('\n--- 6. Admin & Super Admin Permissions ---');
   // Admin can view Staff A's visit
-  const adminGet = visitorService.getVisitById(visitA.id, adminUser);
+  const adminGet = await visitorService.getVisitById(visitA.id, adminUser);
   assert(adminGet.success && adminGet.visit?.id === visitA.id, 'Admin can view Staff A visitor invitation');
 
   // Super Admin can view Staff A's visit
-  const superAdminGet = visitorService.getVisitById(visitA.id, superAdminUser);
+  const superAdminGet = await visitorService.getVisitById(visitA.id, superAdminUser);
   assert(superAdminGet.success && superAdminGet.visit?.id === visitA.id, 'Super Admin can view Staff A visitor invitation');
 
   // Admin can list all visits across organization
-  const adminList = visitorService.listVisits(adminUser);
+  const adminList = await visitorService.listVisits(adminUser);
   assert(adminList.success && adminList.visits.some((v) => v.id === visitA.id), 'Admin list contains visits across organization');
 
   // Admin can create a visit on behalf of a staff member
-  const adminCreate = visitorService.createVisit(
+  const adminCreate = await visitorService.createVisit(
     adminUser,
     {
       visitorFullName: 'Government Inspector',
@@ -279,7 +279,7 @@ async function runPhase6eTests() {
     now.toISOString()
   );
 
-  const issueRes = visitorService.generateVisitorAccessPass(activeVisitId, staffUserA);
+  const issueRes = await visitorService.generateVisitorAccessPass(activeVisitId, staffUserA);
   assert(issueRes.success && !!issueRes.pass && !!issueRes.visit, 'Staff A successfully issued visitor access pass');
 
   const visitorPass = issueRes.pass!;
@@ -333,7 +333,7 @@ async function runPhase6eTests() {
   // 10. Access Verification with Phase 6C Infrastructure
   console.log('\n--- 10. Visitor Access Pass Verification ---');
   accessService.resetRateLimiter();
-  const verifyRes = accessService.verifyAccessPass({
+  const verifyRes = await accessService.verifyAccessPass({
     token: rawToken,
     consumeUse: true,
     ipAddress: '102.129.144.1',
@@ -346,7 +346,7 @@ async function runPhase6eTests() {
   assert(verifyRes.remainingUses === 0, 'Remaining uses is 0');
 
   // Second use on single-use visitor pass rejected as EXHAUSTED
-  const secondUse = accessService.verifyAccessPass({
+  const secondUse = await accessService.verifyAccessPass({
     token: rawToken,
     consumeUse: true,
     ipAddress: '102.129.144.1',
@@ -356,11 +356,11 @@ async function runPhase6eTests() {
   // Past / Expired pass rejected
   const pastValidFrom = new Date(now.getTime() - 4 * 3600 * 1000).toISOString();
   const pastValidUntil = new Date(now.getTime() - 2 * 3600 * 1000).toISOString();
-  const pastPassRes = accessService.createVisitorAccessPass(staffUserA, staffUserA.id, {
+  const pastPassRes = await accessService.createVisitorAccessPass(staffUserA, staffUserA.id, {
     validFrom: pastValidFrom,
     validUntil: pastValidUntil,
   });
-  const pastVerify = accessService.verifyAccessPass({
+  const pastVerify = await accessService.verifyAccessPass({
     token: pastPassRes.pass!.rawToken!,
     ipAddress: '102.129.144.1',
   });
@@ -369,11 +369,11 @@ async function runPhase6eTests() {
   // Future pass rejected as not yet valid
   const futureValidFrom = new Date(now.getTime() + 2 * 3600 * 1000).toISOString();
   const futureValidUntil = new Date(now.getTime() + 4 * 3600 * 1000).toISOString();
-  const futurePassRes = accessService.createVisitorAccessPass(staffUserA, staffUserA.id, {
+  const futurePassRes = await accessService.createVisitorAccessPass(staffUserA, staffUserA.id, {
     validFrom: futureValidFrom,
     validUntil: futureValidUntil,
   });
-  const futureVerify = accessService.verifyAccessPass({
+  const futureVerify = await accessService.verifyAccessPass({
     token: futurePassRes.pass!.rawToken!,
     ipAddress: '102.129.144.1',
   });
@@ -390,11 +390,11 @@ async function runPhase6eTests() {
     ) VALUES (?, ?, ?, ?, ?, ?, 'PENDING', NULL, ?, ?)
   `).run(visit2Id, staffUserA.id, 'Revocable Guest', 'revocable@example.com', activeValidFrom, activeValidUntil, now.toISOString(), now.toISOString());
 
-  const pass2Res = visitorService.generateVisitorAccessPass(visit2Id, staffUserA);
+  const pass2Res = await visitorService.generateVisitorAccessPass(visit2Id, staffUserA);
   const pass2 = pass2Res.pass!;
 
   // Revoke access
-  const revokeRes = visitorService.revokeVisitorAccess(visit2Id, staffUserA, 'Guest reschedule requested');
+  const revokeRes = await visitorService.revokeVisitorAccess(visit2Id, staffUserA, 'Guest reschedule requested');
   assert(revokeRes.success && !!revokeRes.visit, 'Staff A revoked visitor access pass');
   assert(revokeRes.visit!.status === VisitorVisitStatus.PENDING, 'Visit status reverted to PENDING');
 
@@ -408,7 +408,7 @@ async function runPhase6eTests() {
   assert(pass2InDb.revoke_reason === 'Guest reschedule requested', 'Revocation reason recorded');
 
   // Verification of revoked pass rejected
-  const revokedVerify = accessService.verifyAccessPass({
+  const revokedVerify = await accessService.verifyAccessPass({
     token: pass2.rawToken!,
     ipAddress: '102.129.144.1',
   });
@@ -425,11 +425,11 @@ async function runPhase6eTests() {
     ) VALUES (?, ?, ?, ?, ?, ?, 'PENDING', NULL, ?, ?)
   `).run(visit3Id, staffUserA.id, 'Cancellable Guest', 'cancellable@example.com', activeValidFrom, activeValidUntil, now.toISOString(), now.toISOString());
 
-  const pass3Res = visitorService.generateVisitorAccessPass(visit3Id, staffUserA);
+  const pass3Res = await visitorService.generateVisitorAccessPass(visit3Id, staffUserA);
   const pass3 = pass3Res.pass!;
 
   // Cancel visit
-  const cancelRes = visitorService.cancelVisit(visit3Id, staffUserA, 'Host unavailable due to urgent trip');
+  const cancelRes = await visitorService.cancelVisit(visit3Id, staffUserA, 'Host unavailable due to urgent trip');
   assert(cancelRes.success && !!cancelRes.visit, 'Staff A cancelled visitor invitation');
   assert(cancelRes.visit!.status === VisitorVisitStatus.CANCELLED, 'Visit status transitioned to CANCELLED');
   assert(cancelRes.visit!.cancelledBy === staffUserA.id, 'cancelled_by recorded');
@@ -444,14 +444,14 @@ async function runPhase6eTests() {
   assert(pass3InDb.status === AccessPassStatus.REVOKED, 'Active pass automatically revoked upon visit cancellation');
 
   // Verification of cancelled visit rejected
-  const cancelVerify = accessService.verifyAccessPass({
+  const cancelVerify = await accessService.verifyAccessPass({
     token: pass3.rawToken!,
     ipAddress: '102.129.144.1',
   });
   assert(!cancelVerify.valid && (cancelVerify.code === 'VISIT_CANCELLED' || cancelVerify.code === 'ACCESS_REVOKED'), 'Cancelled visit pass rejected upon verification');
 
   // Cannot issue pass for cancelled visit
-  const passAfterCancel = visitorService.generateVisitorAccessPass(visit3Id, staffUserA);
+  const passAfterCancel = await visitorService.generateVisitorAccessPass(visit3Id, staffUserA);
   assert(!passAfterCancel.success, 'Cannot issue access pass for CANCELLED visitor invitation');
 
   // 13. Audit Log Coverage
@@ -468,15 +468,15 @@ async function runPhase6eTests() {
 
   // 14. Metrics & Filtering
   console.log('\n--- 14. Metrics & Filtering ---');
-  const staffListResult = visitorService.listVisits(staffUserA);
+  const staffListResult = await visitorService.listVisits(staffUserA);
   assert(staffListResult.success, 'Staff A listVisits succeeded');
   assert(staffListResult.summary.total >= 3, `Staff A summary total is ${staffListResult.summary.total}`);
   assert(staffListResult.summary.cancelled >= 1, `Staff A cancelled count is ${staffListResult.summary.cancelled}`);
 
-  const filteredStatus = visitorService.listVisits(staffUserA, { status: VisitorVisitStatus.CANCELLED });
+  const filteredStatus = await visitorService.listVisits(staffUserA, { status: VisitorVisitStatus.CANCELLED });
   assert(filteredStatus.visits.every((v) => v.status === VisitorVisitStatus.CANCELLED), 'Status filter returns only CANCELLED visits');
 
-  const filteredSearch = visitorService.listVisits(staffUserA, { search: 'Sarah' });
+  const filteredSearch = await visitorService.listVisits(staffUserA, { search: 'Sarah' });
   assert(filteredSearch.visits.some((v) => v.visitorFullName.includes('Sarah')), 'Search query filters by visitor name');
 
   console.log('\n================================================================');

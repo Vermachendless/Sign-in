@@ -15,7 +15,7 @@ router.use(requireAuth);
  * STAFF requests are strictly and automatically scoped to actor.id.
  * ADMIN and SUPER_ADMIN can inspect all visitors across the organization.
  */
-router.get('/', (req: AuthenticatedRequest, res: Response) => {
+router.get('/', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const actor = req.user!;
     const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
@@ -25,7 +25,7 @@ router.get('/', (req: AuthenticatedRequest, res: Response) => {
     const date = typeof req.query.date === 'string' ? req.query.date : undefined;
     const hostStaffId = typeof req.query.hostStaffId === 'string' ? req.query.hostStaffId : undefined;
 
-    const result = visitorService.listVisits(actor, {
+    const result = await visitorService.listVisits(actor, {
       search,
       status,
       hostStaffId,
@@ -52,7 +52,7 @@ router.get('/', (req: AuthenticatedRequest, res: Response) => {
  * Creates a visitor invitation
  * For STAFF users, hostStaffId is always authoritatively set to authenticatedUser.id
  */
-router.post('/', (req: AuthenticatedRequest, res: Response) => {
+router.post('/', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const actor = req.user!;
     const {
@@ -70,7 +70,7 @@ router.post('/', (req: AuthenticatedRequest, res: Response) => {
     const { ip: clientIp } = extractClientIp(req);
     const userAgent = req.headers['user-agent'] || 'Unknown';
 
-    const result = visitorService.createVisit(
+    const result = await visitorService.createVisit(
       actor,
       { visitorFullName, visitorPhone, visitorEmail, purpose, notes, visitDate, startTime, endTime },
       hostStaffId,
@@ -94,7 +94,7 @@ router.post('/', (req: AuthenticatedRequest, res: Response) => {
  * GET /api/visitor-visits/:id
  * Retrieves single visitor invitation with cross-user authorization enforcement
  */
-router.get('/:id', (req: AuthenticatedRequest, res: Response) => {
+router.get('/:id', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const actor = req.user!;
     const { id } = req.params;
@@ -103,7 +103,7 @@ router.get('/:id', (req: AuthenticatedRequest, res: Response) => {
       return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, 'Visit ID parameter is required.');
     }
 
-    const result = visitorService.getVisitById(id, actor);
+    const result = await visitorService.getVisitById(id, actor);
     if (!result.success || !result.visit) {
       const code = result.status === 403 ? ApiErrorCode.FORBIDDEN : ApiErrorCode.NOT_FOUND;
       return sendError(res, result.status || 404, code, result.error || 'Visitor invitation not found.');
@@ -120,7 +120,7 @@ router.get('/:id', (req: AuthenticatedRequest, res: Response) => {
  * PATCH /api/visitor-visits/:id
  * Updates visitor invitation details with cross-user authorization enforcement
  */
-router.patch('/:id', (req: AuthenticatedRequest, res: Response) => {
+router.patch('/:id', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const actor = req.user!;
     const { id } = req.params;
@@ -142,7 +142,7 @@ router.patch('/:id', (req: AuthenticatedRequest, res: Response) => {
     const { ip: clientIp } = extractClientIp(req);
     const userAgent = req.headers['user-agent'] || 'Unknown';
 
-    const result = visitorService.updateVisit(
+    const result = await visitorService.updateVisit(
       id,
       actor,
       { visitorFullName, visitorPhone, visitorEmail, purpose, notes, visitDate, startTime, endTime },
@@ -166,7 +166,7 @@ router.patch('/:id', (req: AuthenticatedRequest, res: Response) => {
  * POST /api/visitor-visits/:id/access-pass
  * Generates individual VISITOR access pass using Phase 6C infrastructure
  */
-router.post('/:id/access-pass', (req: AuthenticatedRequest, res: Response) => {
+router.post('/:id/access-pass', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const actor = req.user!;
     const { id } = req.params;
@@ -178,7 +178,7 @@ router.post('/:id/access-pass', (req: AuthenticatedRequest, res: Response) => {
     const { ip: clientIp } = extractClientIp(req);
     const userAgent = req.headers['user-agent'] || 'Unknown';
 
-    const result = visitorService.generateVisitorAccessPass(id, actor, clientIp, userAgent);
+    const result = await visitorService.generateVisitorAccessPass(id, actor, clientIp, userAgent);
 
     if (!result.success || !result.visit || !result.pass) {
       const code = result.status === 403 ? ApiErrorCode.FORBIDDEN : ApiErrorCode.VALIDATION_ERROR;
@@ -196,7 +196,7 @@ router.post('/:id/access-pass', (req: AuthenticatedRequest, res: Response) => {
  * POST /api/visitor-visits/:id/revoke-access
  * Revokes an active visitor access pass with cross-user authorization enforcement
  */
-router.post('/:id/revoke-access', (req: AuthenticatedRequest, res: Response) => {
+router.post('/:id/revoke-access', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const actor = req.user!;
     const { id } = req.params;
@@ -209,7 +209,7 @@ router.post('/:id/revoke-access', (req: AuthenticatedRequest, res: Response) => 
     const { ip: clientIp } = extractClientIp(req);
     const userAgent = req.headers['user-agent'] || 'Unknown';
 
-    const result = visitorService.revokeVisitorAccess(id, actor, reason, clientIp, userAgent);
+    const result = await visitorService.revokeVisitorAccess(id, actor, reason, clientIp, userAgent);
 
     if (!result.success || !result.visit) {
       const code = result.status === 403 ? ApiErrorCode.FORBIDDEN : ApiErrorCode.VALIDATION_ERROR;
@@ -227,7 +227,7 @@ router.post('/:id/revoke-access', (req: AuthenticatedRequest, res: Response) => 
  * POST /api/visitor-visits/:id/cancel
  * Cancels a visitor invitation and revokes active pass with cross-user authorization enforcement
  */
-router.post('/:id/cancel', (req: AuthenticatedRequest, res: Response) => {
+router.post('/:id/cancel', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const actor = req.user!;
     const { id } = req.params;
@@ -240,7 +240,7 @@ router.post('/:id/cancel', (req: AuthenticatedRequest, res: Response) => {
     const { ip: clientIp } = extractClientIp(req);
     const userAgent = req.headers['user-agent'] || 'Unknown';
 
-    const result = visitorService.cancelVisit(id, actor, reason, clientIp, userAgent);
+    const result = await visitorService.cancelVisit(id, actor, reason, clientIp, userAgent);
 
     if (!result.success || !result.visit) {
       const code = result.status === 403 ? ApiErrorCode.FORBIDDEN : ApiErrorCode.VALIDATION_ERROR;

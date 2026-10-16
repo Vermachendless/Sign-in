@@ -1,4 +1,4 @@
-import { getDatabase } from '../db/index.ts';
+import { dbAdapter, type DbAdapter } from '../db/adapter.ts';
 import { generateId } from '../utils/crypto.ts';
 import { auditService } from './audit.service.ts';
 import { accessService } from './access.service.ts';
@@ -21,6 +21,19 @@ import {
   formatTimeInTimezone,
   isValidDateString,
 } from '../utils/time.ts';
+
+/**
+ * Computes exact UTC start and end ISO bounds for a calendar date YYYY-MM-DD in Africa/Lagos (+01:00).
+ * Lagos has no daylight saving time, so [startMs, startMs + 24h) is mathematically precise.
+ */
+function getLagosDateRange(dateStr: string): { startIso: string; endIso: string } {
+  const startMs = new Date(`${dateStr}T00:00:00+01:00`).getTime();
+  const endMs = startMs + 24 * 60 * 60 * 1000;
+  return {
+    startIso: new Date(startMs).toISOString(),
+    endIso: new Date(endMs).toISOString(),
+  };
+}
 
 export class VisitorService {
   /**
@@ -101,11 +114,75 @@ export class VisitorService {
   }
 
   /**
+   * Helper to map a raw database query row to a strongly-typed VisitorVisitRecord.
+   * Handles casing variations between SQLite and PostgreSQL.
+   */
+  private mapVisitRecord(r: any, nowIso: string): VisitorVisitRecord {
+    const accessPassId = r.accessPassId ?? r.access_pass_id ?? null;
+    let passRecord: AccessPassRecord | null = null;
+    if (accessPassId) {
+      const passValidFrom = r.passValidFrom ?? r.pass_valid_from ?? '';
+      const passValidUntil = r.passValidUntil ?? r.pass_valid_until ?? '';
+      passRecord = {
+        id: accessPassId,
+        passType: PassType.VISITOR,
+        eventId: null,
+        hostStaffId: r.hostStaffId ?? r.host_staff_id,
+        displayCode: r.passDisplayCode ?? r.pass_display_code ?? '',
+        validFrom: passValidFrom,
+        validUntil: passValidUntil,
+        status: (r.passStatus ?? r.pass_status) || AccessPassStatus.ACTIVE,
+        maxUses: r.passMaxUses ?? r.pass_max_uses ?? null,
+        useCount: r.passUseCount ?? r.pass_use_count ?? 0,
+        createdBy: r.hostStaffId ?? r.host_staff_id,
+        createdAt: r.createdAt ?? r.created_at,
+        updatedAt: r.updatedAt ?? r.updated_at,
+        revokedAt: r.passRevokedAt ?? r.pass_revoked_at ?? null,
+        revokeReason: r.passRevokeReason ?? r.pass_revoke_reason ?? null,
+        formattedValidFrom: accessService.formatDateTime(passValidFrom),
+        formattedValidUntil: accessService.formatDateTime(passValidUntil),
+      };
+    }
+
+    const validFrom = r.validFrom ?? r.valid_from;
+    const validUntil = r.validUntil ?? r.valid_until;
+    let effectiveStatus = (r.status as VisitorVisitStatus) || VisitorVisitStatus.PENDING;
+    if (effectiveStatus !== VisitorVisitStatus.CANCELLED && nowIso > validUntil) {
+      effectiveStatus = VisitorVisitStatus.EXPIRED;
+    }
+
+    return {
+      id: r.id,
+      hostStaffId: r.hostStaffId ?? r.host_staff_id,
+      visitorFullName: r.visitorFullName ?? r.visitor_full_name,
+      visitorPhone: r.visitorPhone ?? r.visitor_phone ?? null,
+      visitorEmail: r.visitorEmail ?? r.visitor_email ?? null,
+      purpose: r.purpose ?? null,
+      notes: r.notes ?? null,
+      validFrom,
+      validUntil,
+      status: effectiveStatus,
+      accessPassId,
+      createdAt: r.createdAt ?? r.created_at,
+      updatedAt: r.updatedAt ?? r.updated_at,
+      cancelledAt: r.cancelledAt ?? r.cancelled_at ?? null,
+      cancelledBy: r.cancelledBy ?? r.cancelled_by ?? null,
+      hostStaffName: r.hostStaffName ?? r.host_staff_name ?? undefined,
+      hostStaffDepartment: r.hostStaffDepartment ?? r.host_staff_department ?? undefined,
+      hostStaffEmail: r.hostStaffEmail ?? r.host_staff_email ?? undefined,
+      cancelledByName: r.cancelledByName ?? r.cancelled_by_name ?? undefined,
+      accessPass: passRecord,
+      formattedDate: formatDateInTimezone(validFrom),
+      formattedTimeRange: `${formatTimeInTimezone(validFrom)} – ${formatTimeInTimezone(validUntil)}`,
+    };
+  }
+
+  /**
    * Lists visitor invitations with search, status filtering, and metrics
    * STAFF results are strictly scoped to their own host_staff_id.
    * ADMIN and SUPER_ADMIN have organization-wide access.
    */
-  public listVisits(
+  public async listVisits(
     actor: SafeUser,
     options?: {
       search?: string;
@@ -115,7 +192,7 @@ export class VisitorService {
       page?: number;
       limit?: number;
     }
-  ): {
+  ): Promise<{
     success: boolean;
     visits: VisitorVisitRecord[];
     total: number;
@@ -123,8 +200,7 @@ export class VisitorService {
     limit: number;
     summary: VisitorVisitsSummary;
     error?: string;
-  } {
-    const db = getDatabase();
+  }> {
     const isStaff = actor.role === UserRole.STAFF;
 
     // Server-enforced host boundary: STAFF can only ever see their own records
@@ -132,67 +208,68 @@ export class VisitorService {
 
     const nowIso = new Date().toISOString();
     const todayStr = getTodayDateString(COMPANY_TIMEZONE);
+    const { startIso: todayStartIso, endIso: todayEndIso } = getLagosDateRange(todayStr);
 
-    // 1. Calculate Summary Metrics
+    // 1. Calculate Summary Metrics using portable range predicates
     let summarySql = `
       SELECT 
-        COUNT(*) as total,
-        COUNT(CASE WHEN DATE(valid_from, '+1 hour') = ? THEN 1 END) as today,
-        COUNT(CASE WHEN valid_from > ? AND status != 'CANCELLED' THEN 1 END) as upcoming,
-        COUNT(CASE WHEN status = 'ACCESS_ISSUED' THEN 1 END) as accessIssued,
-        COUNT(CASE WHEN status = 'PENDING' THEN 1 END) as pending,
-        COUNT(CASE WHEN status = 'CANCELLED' THEN 1 END) as cancelled
+        COUNT(*) as "total",
+        COUNT(CASE WHEN valid_from >= $1 AND valid_from < $2 THEN 1 END) as "today",
+        COUNT(CASE WHEN valid_from > $3 AND status != 'CANCELLED' THEN 1 END) as "upcoming",
+        COUNT(CASE WHEN status = 'ACCESS_ISSUED' THEN 1 END) as "accessIssued",
+        COUNT(CASE WHEN status = 'PENDING' THEN 1 END) as "pending",
+        COUNT(CASE WHEN status = 'CANCELLED' THEN 1 END) as "cancelled"
       FROM visitor_visits
       WHERE 1=1
     `;
-    const summaryParams: (string | number)[] = [todayStr, nowIso];
+    const summaryParams: (string | number)[] = [todayStartIso, todayEndIso, nowIso];
 
     if (effectiveHostStaffId) {
-      summarySql += ' AND host_staff_id = ?';
+      summarySql += ' AND host_staff_id = $4';
       summaryParams.push(effectiveHostStaffId);
     }
 
-    const summaryRow = db.prepare(summarySql).get(...summaryParams) as any;
+    const summaryRow = await dbAdapter.queryOne<any>(summarySql, summaryParams);
     const summary: VisitorVisitsSummary = {
       total: Number(summaryRow?.total || 0),
       today: Number(summaryRow?.today || 0),
       upcoming: Number(summaryRow?.upcoming || 0),
-      accessIssued: Number(summaryRow?.accessIssued || 0),
+      accessIssued: Number(summaryRow?.accessIssued ?? summaryRow?.accessissued ?? 0),
       pending: Number(summaryRow?.pending || 0),
       cancelled: Number(summaryRow?.cancelled || 0),
     };
 
-    // 2. Build Query
+    // 2. Build Filtered Query
     let countSql = 'SELECT COUNT(*) as count FROM visitor_visits vv LEFT JOIN users u ON vv.host_staff_id = u.id WHERE 1=1';
     let dataSql = `
       SELECT 
         vv.id,
-        vv.host_staff_id as hostStaffId,
-        vv.visitor_full_name as visitorFullName,
-        vv.visitor_phone as visitorPhone,
-        vv.visitor_email as visitorEmail,
+        vv.host_staff_id as "hostStaffId",
+        vv.visitor_full_name as "visitorFullName",
+        vv.visitor_phone as "visitorPhone",
+        vv.visitor_email as "visitorEmail",
         vv.purpose,
         vv.notes,
-        vv.valid_from as validFrom,
-        vv.valid_until as validUntil,
+        vv.valid_from as "validFrom",
+        vv.valid_until as "validUntil",
         vv.status,
-        vv.access_pass_id as accessPassId,
-        vv.created_at as createdAt,
-        vv.updated_at as updatedAt,
-        vv.cancelled_at as cancelledAt,
-        vv.cancelled_by as cancelledBy,
-        (u.first_name || ' ' || u.last_name) as hostStaffName,
-        u.department as hostStaffDepartment,
-        u.email as hostStaffEmail,
-        (cu.first_name || ' ' || cu.last_name) as cancelledByName,
-        ap.display_code as passDisplayCode,
-        ap.status as passStatus,
-        ap.valid_from as passValidFrom,
-        ap.valid_until as passValidUntil,
-        ap.max_uses as passMaxUses,
-        ap.use_count as passUseCount,
-        ap.revoked_at as passRevokedAt,
-        ap.revoke_reason as passRevokeReason
+        vv.access_pass_id as "accessPassId",
+        vv.created_at as "createdAt",
+        vv.updated_at as "updatedAt",
+        vv.cancelled_at as "cancelledAt",
+        vv.cancelled_by as "cancelledBy",
+        (u.first_name || ' ' || u.last_name) as "hostStaffName",
+        u.department as "hostStaffDepartment",
+        u.email as "hostStaffEmail",
+        (cu.first_name || ' ' || cu.last_name) as "cancelledByName",
+        ap.display_code as "passDisplayCode",
+        ap.status as "passStatus",
+        ap.valid_from as "passValidFrom",
+        ap.valid_until as "passValidUntil",
+        ap.max_uses as "passMaxUses",
+        ap.use_count as "passUseCount",
+        ap.revoked_at as "passRevokedAt",
+        ap.revoke_reason as "passRevokeReason"
       FROM visitor_visits vv
       LEFT JOIN users u ON vv.host_staff_id = u.id
       LEFT JOIN users cu ON vv.cancelled_by = cu.id
@@ -201,41 +278,48 @@ export class VisitorService {
     `;
 
     const params: (string | number)[] = [];
+    let pIdx = 1;
 
     // Host scoping
     if (effectiveHostStaffId) {
-      countSql += ' AND vv.host_staff_id = ?';
-      dataSql += ' AND vv.host_staff_id = ?';
+      const p = `$${pIdx++}`;
+      countSql += ` AND vv.host_staff_id = ${p}`;
+      dataSql += ` AND vv.host_staff_id = ${p}`;
       params.push(effectiveHostStaffId);
     }
 
     // Status filter
     if (options?.status && Object.values(VisitorVisitStatus).includes(options.status as VisitorVisitStatus)) {
-      countSql += ' AND vv.status = ?';
-      dataSql += ' AND vv.status = ?';
+      const p = `$${pIdx++}`;
+      countSql += ` AND vv.status = ${p}`;
+      dataSql += ` AND vv.status = ${p}`;
       params.push(options.status);
     }
 
-    // Date filter (matches YYYY-MM-DD in Lagos timezone)
+    // Date filter (matches YYYY-MM-DD in Lagos timezone using portable UTC range)
     if (options?.date && isValidDateString(options.date)) {
-      countSql += " AND DATE(vv.valid_from, '+1 hour') = ?";
-      dataSql += " AND DATE(vv.valid_from, '+1 hour') = ?";
-      params.push(options.date);
+      const { startIso, endIso } = getLagosDateRange(options.date);
+      const p1 = `$${pIdx++}`;
+      const p2 = `$${pIdx++}`;
+      countSql += ` AND vv.valid_from >= ${p1} AND vv.valid_from < ${p2}`;
+      dataSql += ` AND vv.valid_from >= ${p1} AND vv.valid_from < ${p2}`;
+      params.push(startIso, endIso);
     }
 
-    // Search filter
+    // Search filter (case-insensitive across SQLite and PostgreSQL)
     if (options?.search && options.search.trim()) {
-      const term = `%${options.search.trim()}%`;
+      const term = `%${options.search.trim().toLowerCase()}%`;
+      const p = `$${pIdx++}`;
       const searchClause = ` AND (
-        vv.visitor_full_name LIKE ? OR 
-        vv.visitor_email LIKE ? OR 
-        vv.purpose LIKE ? OR 
-        u.first_name LIKE ? OR 
-        u.last_name LIKE ?
+        LOWER(vv.visitor_full_name) LIKE ${p} OR 
+        LOWER(vv.visitor_email) LIKE ${p} OR 
+        LOWER(vv.purpose) LIKE ${p} OR 
+        LOWER(u.first_name) LIKE ${p} OR 
+        LOWER(u.last_name) LIKE ${p}
       )`;
       countSql += searchClause;
       dataSql += searchClause;
-      params.push(term, term, term, term, term);
+      params.push(term);
     }
 
     // Pagination
@@ -243,69 +327,16 @@ export class VisitorService {
     const limit = Math.min(100, Math.max(1, options?.limit || 20));
     const offset = (page - 1) * limit;
 
-    const countRow = db.prepare(countSql).get(...params) as { count: number };
+    const countRow = await dbAdapter.queryOne<{ count: number }>(countSql, [...params]);
     const total = Number(countRow?.count || 0);
 
-    dataSql += ' ORDER BY vv.valid_from DESC LIMIT ? OFFSET ?';
+    const limitP = `$${pIdx++}`;
+    const offsetP = `$${pIdx++}`;
+    dataSql += ` ORDER BY vv.valid_from DESC LIMIT ${limitP} OFFSET ${offsetP}`;
     const dataParams = [...params, limit, offset];
 
-    const rows = db.prepare(dataSql).all(...dataParams) as any[];
-
-    const visits: VisitorVisitRecord[] = rows.map((r) => {
-      let passRecord: AccessPassRecord | null = null;
-      if (r.accessPassId) {
-        passRecord = {
-          id: r.accessPassId,
-          passType: PassType.VISITOR,
-          eventId: null,
-          hostStaffId: r.hostStaffId,
-          displayCode: r.passDisplayCode || '',
-          validFrom: r.passValidFrom || '',
-          validUntil: r.passValidUntil || '',
-          status: r.passStatus || AccessPassStatus.ACTIVE,
-          maxUses: r.passMaxUses,
-          useCount: r.passUseCount || 0,
-          createdBy: r.hostStaffId,
-          createdAt: r.createdAt,
-          updatedAt: r.updatedAt,
-          revokedAt: r.passRevokedAt,
-          revokeReason: r.passRevokeReason,
-          formattedValidFrom: accessService.formatDateTime(r.passValidFrom),
-          formattedValidUntil: accessService.formatDateTime(r.passValidUntil),
-        };
-      }
-
-      // Check dynamic expiration
-      let effectiveStatus = r.status as VisitorVisitStatus;
-      if (effectiveStatus !== VisitorVisitStatus.CANCELLED && nowIso > r.validUntil) {
-        effectiveStatus = VisitorVisitStatus.EXPIRED;
-      }
-
-      return {
-        id: r.id,
-        hostStaffId: r.hostStaffId,
-        visitorFullName: r.visitorFullName,
-        visitorPhone: r.visitorPhone,
-        visitorEmail: r.visitorEmail,
-        purpose: r.purpose,
-        notes: r.notes,
-        validFrom: r.validFrom,
-        validUntil: r.validUntil,
-        status: effectiveStatus,
-        accessPassId: r.accessPassId,
-        createdAt: r.createdAt,
-        updatedAt: r.updatedAt,
-        cancelledAt: r.cancelledAt,
-        cancelledBy: r.cancelledBy,
-        hostStaffName: r.hostStaffName,
-        hostStaffDepartment: r.hostStaffDepartment,
-        hostStaffEmail: r.hostStaffEmail,
-        cancelledByName: r.cancelledByName,
-        accessPass: passRecord,
-        formattedDate: formatDateInTimezone(r.validFrom),
-        formattedTimeRange: `${formatTimeInTimezone(r.validFrom)} – ${formatTimeInTimezone(r.validUntil)}`,
-      };
-    });
+    const rows = await dbAdapter.query<any>(dataSql, dataParams);
+    const visits: VisitorVisitRecord[] = rows.map((r) => this.mapVisitRecord(r, nowIso));
 
     return {
       success: true,
@@ -320,54 +351,59 @@ export class VisitorService {
   /**
    * Retrieves single visit by ID with strict cross-user authorization enforcement
    */
-  public getVisitById(
+  public async getVisitById(
     visitId: string,
-    actor: SafeUser
-  ): { success: boolean; visit?: VisitorVisitRecord; error?: string; status?: number } {
-    const db = getDatabase();
+    actor: SafeUser,
+    txClient?: DbAdapter
+  ): Promise<{ success: boolean; visit?: VisitorVisitRecord; error?: string; status?: number }> {
+    const db = txClient || dbAdapter;
 
-    const row = db.prepare(`
+    const row = await db.queryOne<any>(
+      `
       SELECT 
         vv.id,
-        vv.host_staff_id as hostStaffId,
-        vv.visitor_full_name as visitorFullName,
-        vv.visitor_phone as visitorPhone,
-        vv.visitor_email as visitorEmail,
+        vv.host_staff_id as "hostStaffId",
+        vv.visitor_full_name as "visitorFullName",
+        vv.visitor_phone as "visitorPhone",
+        vv.visitor_email as "visitorEmail",
         vv.purpose,
         vv.notes,
-        vv.valid_from as validFrom,
-        vv.valid_until as validUntil,
+        vv.valid_from as "validFrom",
+        vv.valid_until as "validUntil",
         vv.status,
-        vv.access_pass_id as accessPassId,
-        vv.created_at as createdAt,
-        vv.updated_at as updatedAt,
-        vv.cancelled_at as cancelledAt,
-        vv.cancelled_by as cancelledBy,
-        (u.first_name || ' ' || u.last_name) as hostStaffName,
-        u.department as hostStaffDepartment,
-        u.email as hostStaffEmail,
-        (cu.first_name || ' ' || cu.last_name) as cancelledByName,
-        ap.display_code as passDisplayCode,
-        ap.status as passStatus,
-        ap.valid_from as passValidFrom,
-        ap.valid_until as passValidUntil,
-        ap.max_uses as passMaxUses,
-        ap.use_count as passUseCount,
-        ap.revoked_at as passRevokedAt,
-        ap.revoke_reason as passRevokeReason
+        vv.access_pass_id as "accessPassId",
+        vv.created_at as "createdAt",
+        vv.updated_at as "updatedAt",
+        vv.cancelled_at as "cancelledAt",
+        vv.cancelled_by as "cancelledBy",
+        (u.first_name || ' ' || u.last_name) as "hostStaffName",
+        u.department as "hostStaffDepartment",
+        u.email as "hostStaffEmail",
+        (cu.first_name || ' ' || cu.last_name) as "cancelledByName",
+        ap.display_code as "passDisplayCode",
+        ap.status as "passStatus",
+        ap.valid_from as "passValidFrom",
+        ap.valid_until as "passValidUntil",
+        ap.max_uses as "passMaxUses",
+        ap.use_count as "passUseCount",
+        ap.revoked_at as "passRevokedAt",
+        ap.revoke_reason as "passRevokeReason"
       FROM visitor_visits vv
       LEFT JOIN users u ON vv.host_staff_id = u.id
       LEFT JOIN users cu ON vv.cancelled_by = cu.id
       LEFT JOIN access_passes ap ON vv.access_pass_id = ap.id
-      WHERE vv.id = ?
-    `).get(visitId) as any;
+      WHERE vv.id = $1
+    `,
+      [visitId]
+    );
 
     if (!row) {
       return { success: false, error: 'Visitor invitation not found.', status: 404 };
     }
 
+    const hostStaffId = row.hostStaffId ?? row.host_staff_id;
     // Cross-user authorization check: STAFF can only access their own visits
-    if (actor.role === UserRole.STAFF && row.hostStaffId !== actor.id) {
+    if (actor.role === UserRole.STAFF && hostStaffId !== actor.id) {
       return {
         success: false,
         error: 'Forbidden: You are not authorized to view this visitor invitation.',
@@ -375,76 +411,23 @@ export class VisitorService {
       };
     }
 
-    let passRecord: AccessPassRecord | null = null;
-    if (row.accessPassId) {
-      passRecord = {
-        id: row.accessPassId,
-        passType: PassType.VISITOR,
-        eventId: null,
-        hostStaffId: row.hostStaffId,
-        displayCode: row.passDisplayCode || '',
-        validFrom: row.passValidFrom || '',
-        validUntil: row.passValidUntil || '',
-        status: row.passStatus || AccessPassStatus.ACTIVE,
-        maxUses: row.passMaxUses,
-        useCount: row.passUseCount || 0,
-        createdBy: row.hostStaffId,
-        createdAt: row.createdAt,
-        updatedAt: row.updatedAt,
-        revokedAt: row.passRevokedAt,
-        revokeReason: row.passRevokeReason,
-        formattedValidFrom: accessService.formatDateTime(row.passValidFrom),
-        formattedValidUntil: accessService.formatDateTime(row.passValidUntil),
-      };
-    }
-
     const nowIso = new Date().toISOString();
-    let effectiveStatus = row.status as VisitorVisitStatus;
-    if (effectiveStatus !== VisitorVisitStatus.CANCELLED && nowIso > row.validUntil) {
-      effectiveStatus = VisitorVisitStatus.EXPIRED;
-    }
-
     return {
       success: true,
-      visit: {
-        id: row.id,
-        hostStaffId: row.hostStaffId,
-        visitorFullName: row.visitorFullName,
-        visitorPhone: row.visitorPhone,
-        visitorEmail: row.visitorEmail,
-        purpose: row.purpose,
-        notes: row.notes,
-        validFrom: row.validFrom,
-        validUntil: row.validUntil,
-        status: effectiveStatus,
-        accessPassId: row.accessPassId,
-        createdAt: row.createdAt,
-        updatedAt: row.updatedAt,
-        cancelledAt: row.cancelledAt,
-        cancelledBy: row.cancelledBy,
-        hostStaffName: row.hostStaffName,
-        hostStaffDepartment: row.hostStaffDepartment,
-        hostStaffEmail: row.hostStaffEmail,
-        cancelledByName: row.cancelledByName,
-        accessPass: passRecord,
-        formattedDate: formatDateInTimezone(row.validFrom),
-        formattedTimeRange: `${formatTimeInTimezone(row.validFrom)} – ${formatTimeInTimezone(row.validUntil)}`,
-      },
+      visit: this.mapVisitRecord(row, nowIso),
     };
   }
 
   /**
    * Creates a new visitor invitation
    */
-  public createVisit(
+  public async createVisit(
     actor: SafeUser,
     input: CreateVisitorVisitInput,
     targetHostStaffId?: string,
     ipAddress?: string,
     userAgent?: string
-  ): { success: boolean; visit?: VisitorVisitRecord; error?: string; status?: number } {
-    const db = getDatabase();
-
+  ): Promise<{ success: boolean; visit?: VisitorVisitRecord; error?: string; status?: number }> {
     // 1. Determine host staff ID:
     // STAFF can ONLY create for themselves. Never trust client body for host_staff_id when role is STAFF!
     let hostStaffId = actor.id;
@@ -455,7 +438,10 @@ export class VisitorService {
     }
 
     // Verify host staff user exists and is active
-    const host = db.prepare('SELECT id, first_name, last_name, department, email, status FROM users WHERE id = ?').get(hostStaffId) as any;
+    const host = await dbAdapter.queryOne<{ id: string; first_name: string; last_name: string; department: string; email: string; status: string }>(
+      'SELECT id, first_name, last_name, department, email, status FROM users WHERE id = $1',
+      [hostStaffId]
+    );
     if (!host) {
       return { success: false, error: 'Host staff member not found.', status: 404 };
     }
@@ -486,14 +472,17 @@ export class VisitorService {
 
     // Advisory duplicate check: avoid exact overlapping active invitations for same host and visitor email
     if (visitorEmail) {
-      const duplicate = db.prepare(`
+      const duplicate = await dbAdapter.queryOne<{ id: string }>(
+        `
         SELECT id FROM visitor_visits
-        WHERE host_staff_id = ? 
-          AND LOWER(visitor_email) = LOWER(?)
-          AND valid_from = ?
-          AND valid_until = ?
+        WHERE host_staff_id = $1 
+          AND LOWER(visitor_email) = LOWER($2)
+          AND valid_from = $3
+          AND valid_until = $4
           AND status != 'CANCELLED'
-      `).get(hostStaffId, visitorEmail, windowResult.validFrom, windowResult.validUntil);
+      `,
+        [hostStaffId, visitorEmail, windowResult.validFrom, windowResult.validUntil]
+      );
 
       if (duplicate) {
         return {
@@ -509,29 +498,32 @@ export class VisitorService {
     const nowIso = new Date().toISOString();
 
     try {
-      db.prepare(`
+      await dbAdapter.execute(
+        `
         INSERT INTO visitor_visits (
           id, host_staff_id, visitor_full_name, visitor_phone, visitor_email,
           purpose, notes, valid_from, valid_until, status, access_pass_id,
           created_at, updated_at, cancelled_at, cancelled_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL)
-      `).run(
-        id,
-        hostStaffId,
-        visitorFullName,
-        visitorPhone,
-        visitorEmail,
-        purpose,
-        notes,
-        windowResult.validFrom,
-        windowResult.validUntil,
-        VisitorVisitStatus.PENDING,
-        nowIso,
-        nowIso
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL, $11, $12, NULL, NULL)
+      `,
+        [
+          id,
+          hostStaffId,
+          visitorFullName,
+          visitorPhone,
+          visitorEmail,
+          purpose,
+          notes,
+          windowResult.validFrom,
+          windowResult.validUntil,
+          VisitorVisitStatus.PENDING,
+          nowIso,
+          nowIso,
+        ]
       );
 
       // 5. Immutable audit logging
-      auditService.log({
+      await auditService.log({
         actorId: actor.id,
         action: 'VISITOR_CREATED',
         ipAddress,
@@ -548,7 +540,7 @@ export class VisitorService {
         },
       });
 
-      const result = this.getVisitById(id, actor);
+      const result = await this.getVisitById(id, actor);
       return { success: true, visit: result.visit };
     } catch (err) {
       console.error('[VisitorService] createVisit error:', err);
@@ -559,22 +551,21 @@ export class VisitorService {
   /**
    * Updates an existing visitor invitation
    */
-  public updateVisit(
+  public async updateVisit(
     visitId: string,
     actor: SafeUser,
     input: UpdateVisitorVisitInput,
     ipAddress?: string,
     userAgent?: string
-  ): { success: boolean; visit?: VisitorVisitRecord; error?: string; status?: number } {
-    const db = getDatabase();
-
-    const existing = db.prepare('SELECT * FROM visitor_visits WHERE id = ?').get(visitId) as any;
+  ): Promise<{ success: boolean; visit?: VisitorVisitRecord; error?: string; status?: number }> {
+    const existing = await dbAdapter.queryOne<any>('SELECT * FROM visitor_visits WHERE id = $1', [visitId]);
     if (!existing) {
       return { success: false, error: 'Visitor invitation not found.', status: 404 };
     }
 
+    const hostStaffId = existing.host_staff_id ?? existing.hostStaffId;
     // Cross-user authorization check: STAFF can only update their own visits
-    if (actor.role === UserRole.STAFF && existing.host_staff_id !== actor.id) {
+    if (actor.role === UserRole.STAFF && hostStaffId !== actor.id) {
       return {
         success: false,
         error: 'Forbidden: You cannot modify another staff member\'s visitor invitation.',
@@ -586,13 +577,13 @@ export class VisitorService {
       return { success: false, error: 'Cannot update a cancelled visitor invitation.', status: 400 };
     }
 
-    const visitorFullName = input.visitorFullName !== undefined ? this.normalizeString(input.visitorFullName) : existing.visitor_full_name;
+    const visitorFullName = input.visitorFullName !== undefined ? this.normalizeString(input.visitorFullName) : (existing.visitor_full_name ?? existing.visitorFullName);
     if (input.visitorFullName !== undefined && !visitorFullName) {
       return { success: false, error: 'Visitor full name cannot be empty.', status: 400 };
     }
 
-    const visitorPhone = input.visitorPhone !== undefined ? this.normalizeString(input.visitorPhone) : existing.visitor_phone;
-    const visitorEmail = input.visitorEmail !== undefined ? this.normalizeEmail(input.visitorEmail) : existing.visitor_email;
+    const visitorPhone = input.visitorPhone !== undefined ? this.normalizeString(input.visitorPhone) : (existing.visitor_phone ?? existing.visitorPhone);
+    const visitorEmail = input.visitorEmail !== undefined ? this.normalizeEmail(input.visitorEmail) : (existing.visitor_email ?? existing.visitorEmail);
     const purpose = input.purpose !== undefined ? this.normalizeString(input.purpose) : existing.purpose;
     const notes = input.notes !== undefined ? this.normalizeString(input.notes) : existing.notes;
 
@@ -601,15 +592,13 @@ export class VisitorService {
     }
 
     // Time window update if date or times provided
-    let validFrom = existing.valid_from;
-    let validUntil = existing.valid_until;
+    let validFrom = existing.valid_from ?? existing.validFrom;
+    let validUntil = existing.valid_until ?? existing.validUntil;
 
     if (input.visitDate || input.startTime || input.endTime) {
-      // If updating time, default missing fields from existing timestamps
-      const existingDate = formatDateInTimezone(existing.valid_from).split(',')[0]; // or parse YYYY-MM-DD
-      const dateStr = input.visitDate || existing.valid_from.split('T')[0];
-      const startTimeStr = input.startTime || formatTimeInTimezone(existing.valid_from);
-      const endTimeStr = input.endTime || formatTimeInTimezone(existing.valid_until);
+      const dateStr = input.visitDate || validFrom.split('T')[0];
+      const startTimeStr = input.startTime || formatTimeInTimezone(validFrom);
+      const endTimeStr = input.endTime || formatTimeInTimezone(validUntil);
 
       const windowResult = this.computeValidityWindow(dateStr, startTimeStr, endTimeStr);
       if (!windowResult.valid || !windowResult.validFrom || !windowResult.validUntil) {
@@ -620,25 +609,34 @@ export class VisitorService {
     }
 
     const nowIso = new Date().toISOString();
+    const accessPassId = existing.access_pass_id ?? existing.accessPassId;
 
     try {
-      db.prepare(`
-        UPDATE visitor_visits
-        SET visitor_full_name = ?, visitor_phone = ?, visitor_email = ?,
-            purpose = ?, notes = ?, valid_from = ?, valid_until = ?, updated_at = ?
-        WHERE id = ?
-      `).run(visitorFullName, visitorPhone, visitorEmail, purpose, notes, validFrom, validUntil, nowIso, visitId);
+      await dbAdapter.transaction(async (tx) => {
+        await tx.execute(
+          `
+          UPDATE visitor_visits
+          SET visitor_full_name = $1, visitor_phone = $2, visitor_email = $3,
+              purpose = $4, notes = $5, valid_from = $6, valid_until = $7, updated_at = $8
+          WHERE id = $9
+        `,
+          [visitorFullName, visitorPhone, visitorEmail, purpose, notes, validFrom, validUntil, nowIso, visitId]
+        );
 
-      // If active access pass already exists, sync its validity window
-      if (existing.access_pass_id) {
-        db.prepare(`
-          UPDATE access_passes
-          SET valid_from = ?, valid_until = ?, updated_at = ?
-          WHERE id = ?
-        `).run(validFrom, validUntil, nowIso, existing.access_pass_id);
-      }
+        // If active access pass already exists, sync its validity window atomically
+        if (accessPassId) {
+          await tx.execute(
+            `
+            UPDATE access_passes
+            SET valid_from = $1, valid_until = $2, updated_at = $3
+            WHERE id = $4
+          `,
+            [validFrom, validUntil, nowIso, accessPassId]
+          );
+        }
+      });
 
-      auditService.log({
+      await auditService.log({
         actorId: actor.id,
         action: 'VISITOR_UPDATED',
         ipAddress,
@@ -652,7 +650,7 @@ export class VisitorService {
         },
       });
 
-      const updated = this.getVisitById(visitId, actor);
+      const updated = await this.getVisitById(visitId, actor);
       return { success: true, visit: updated.visit };
     } catch (err) {
       console.error('[VisitorService] updateVisit error:', err);
@@ -662,28 +660,28 @@ export class VisitorService {
 
   /**
    * Generates a VISITOR access pass for this invitation using Phase 6C infrastructure
+   * Strictly atomic: pass creation and visitor record linkage commit or roll back together.
    */
-  public generateVisitorAccessPass(
+  public async generateVisitorAccessPass(
     visitId: string,
     actor: SafeUser,
     ipAddress?: string,
     userAgent?: string
-  ): {
+  ): Promise<{
     success: boolean;
     visit?: VisitorVisitRecord;
     pass?: AccessPassRecord;
     error?: string;
     status?: number;
-  } {
-    const db = getDatabase();
-
-    const visit = db.prepare('SELECT * FROM visitor_visits WHERE id = ?').get(visitId) as any;
+  }> {
+    const visit = await dbAdapter.queryOne<any>('SELECT * FROM visitor_visits WHERE id = $1', [visitId]);
     if (!visit) {
       return { success: false, error: 'Visitor invitation not found.', status: 404 };
     }
 
+    const hostStaffId = visit.host_staff_id ?? visit.hostStaffId;
     // Cross-user authorization check: STAFF can only generate pass for their own visitor
-    if (actor.role === UserRole.STAFF && visit.host_staff_id !== actor.id) {
+    if (actor.role === UserRole.STAFF && hostStaffId !== actor.id) {
       return {
         success: false,
         error: 'Forbidden: You cannot generate an access pass for another staff member\'s visitor.',
@@ -696,85 +694,98 @@ export class VisitorService {
     }
 
     const nowIso = new Date().toISOString();
-    if (nowIso > visit.valid_until) {
+    const validFrom = visit.valid_from ?? visit.validFrom;
+    const validUntil = visit.valid_until ?? visit.validUntil;
+
+    if (nowIso > validUntil) {
       return { success: false, error: 'Cannot issue an access pass for an expired visit window.', status: 400 };
     }
 
-    // Generate individual VISITOR access pass via Phase 6C AccessService
-    const passResult = accessService.createVisitorAccessPass(
-      actor,
-      visit.host_staff_id,
-      {
-        validFrom: visit.valid_from,
-        validUntil: visit.valid_until,
-        maxUses: 1, // Single-use visitor pass
-      },
-      ipAddress,
-      userAgent
-    );
-
-    if (!passResult.success || !passResult.pass) {
-      return {
-        success: false,
-        error: passResult.error || 'Failed to generate visitor access pass.',
-        status: 400,
-      };
-    }
-
     try {
-      db.prepare(`
-        UPDATE visitor_visits
-        SET access_pass_id = ?, status = ?, updated_at = ?
-        WHERE id = ?
-      `).run(passResult.pass.id, VisitorVisitStatus.ACCESS_ISSUED, nowIso, visitId);
+      const generatedPass = await dbAdapter.transaction(async (tx) => {
+        // Generate individual VISITOR access pass via Phase 6C AccessService participating in this tx
+        const passResult = await accessService.createVisitorAccessPass(
+          actor,
+          hostStaffId,
+          {
+            validFrom,
+            validUntil,
+            maxUses: 1, // Single-use visitor pass
+          },
+          ipAddress,
+          userAgent,
+          tx
+        );
 
-      auditService.log({
+        if (!passResult.success || !passResult.pass) {
+          throw new Error(passResult.error || 'Failed to generate visitor access pass.');
+        }
+
+        // Link access pass to visitor invitation on same tx
+        await tx.execute(
+          `
+          UPDATE visitor_visits
+          SET access_pass_id = $1, status = $2, updated_at = $3
+          WHERE id = $4
+        `,
+          [passResult.pass.id, VisitorVisitStatus.ACCESS_ISSUED, nowIso, visitId]
+        );
+
+        return passResult.pass;
+      });
+
+      // Audit logging after transaction commits cleanly
+      await auditService.log({
         actorId: actor.id,
         action: 'VISITOR_ACCESS_ISSUED',
         ipAddress,
         userAgent,
         metadata: {
           visitId,
-          hostStaffId: visit.host_staff_id,
-          visitorFullName: visit.visitor_full_name,
-          passId: passResult.pass.id,
-          displayCode: passResult.pass.displayCode,
-          validFrom: passResult.pass.validFrom,
-          validUntil: passResult.pass.validUntil,
+          hostStaffId,
+          visitorFullName: visit.visitor_full_name ?? visit.visitorFullName,
+          passId: generatedPass.id,
+          displayCode: generatedPass.displayCode,
+          validFrom: generatedPass.validFrom,
+          validUntil: generatedPass.validUntil,
         },
       });
 
-      const updated = this.getVisitById(visitId, actor);
+      const updated = await this.getVisitById(visitId, actor);
       return {
         success: true,
         visit: updated.visit,
-        pass: passResult.pass,
+        pass: generatedPass,
       };
-    } catch (err) {
-      console.error('[VisitorService] generateVisitorAccessPass error:', err);
-      return { success: false, error: 'Database error linking visitor access pass.', status: 500 };
+    } catch (err: any) {
+      console.error('[VisitorService] generateVisitorAccessPass error:', err.message || err);
+      return {
+        success: false,
+        error: err.message || 'Database error linking visitor access pass.',
+        status: 500,
+      };
     }
   }
 
   /**
-   * Revokes a visitor's access pass while retaining the historical visit record
+   * Revokes a visitor's access pass while retaining the historical visit record.
+   * Atomically reverts visit status to PENDING and marks pass REVOKED.
    */
-  public revokeVisitorAccess(
+  public async revokeVisitorAccess(
     visitId: string,
     actor: SafeUser,
     reason?: string,
     ipAddress?: string,
     userAgent?: string
-  ): { success: boolean; visit?: VisitorVisitRecord; error?: string; status?: number } {
-    const db = getDatabase();
-
-    const visit = db.prepare('SELECT * FROM visitor_visits WHERE id = ?').get(visitId) as any;
+  ): Promise<{ success: boolean; visit?: VisitorVisitRecord; error?: string; status?: number }> {
+    const visit = await dbAdapter.queryOne<any>('SELECT * FROM visitor_visits WHERE id = $1', [visitId]);
     if (!visit) {
       return { success: false, error: 'Visitor invitation not found.', status: 404 };
     }
 
+    const hostStaffId = visit.host_staff_id ?? visit.hostStaffId;
     // Cross-user authorization check: STAFF can only revoke their own visitors
-    if (actor.role === UserRole.STAFF && visit.host_staff_id !== actor.id) {
+    if (actor.role === UserRole.STAFF && hostStaffId !== actor.id) {
       return {
         success: false,
         error: 'Forbidden: You cannot revoke another staff member\'s visitor access.',
@@ -782,76 +793,85 @@ export class VisitorService {
       };
     }
 
-    if (!visit.access_pass_id) {
+    const accessPassId = visit.access_pass_id ?? visit.accessPassId;
+    if (!accessPassId) {
       return { success: false, error: 'No active access pass found for this visitor invitation.', status: 400 };
     }
 
     const revokeReason = reason?.trim() || 'Visitor access revoked by host staff member';
-
-    // Revoke the pass using Phase 6C revocation mechanism
-    const revokeResult = accessService.revokeAccessPass(
-      visit.access_pass_id,
-      actor,
-      revokeReason,
-      ipAddress,
-      userAgent
-    );
-
-    if (!revokeResult.success) {
-      return { success: false, error: revokeResult.error || 'Failed to revoke access pass.', status: 400 };
-    }
-
     const nowIso = new Date().toISOString();
 
     try {
-      // Revert status to PENDING while retaining historical visit and pass link
-      db.prepare(`
-        UPDATE visitor_visits
-        SET status = ?, updated_at = ?
-        WHERE id = ?
-      `).run(VisitorVisitStatus.PENDING, nowIso, visitId);
+      await dbAdapter.transaction(async (tx) => {
+        // Revoke the pass participating in tx
+        const revokeResult = await accessService.revokeAccessPass(
+          accessPassId,
+          actor,
+          revokeReason,
+          ipAddress,
+          userAgent,
+          tx
+        );
 
-      auditService.log({
+        if (!revokeResult.success) {
+          throw new Error(revokeResult.error || 'Failed to revoke access pass.');
+        }
+
+        // Revert status to PENDING while retaining historical visit and pass link
+        await tx.execute(
+          `
+          UPDATE visitor_visits
+          SET status = $1, updated_at = $2
+          WHERE id = $3
+        `,
+          [VisitorVisitStatus.PENDING, nowIso, visitId]
+        );
+      });
+
+      await auditService.log({
         actorId: actor.id,
         action: 'VISITOR_ACCESS_REVOKED',
         ipAddress,
         userAgent,
         metadata: {
           visitId,
-          hostStaffId: visit.host_staff_id,
-          visitorFullName: visit.visitor_full_name,
-          accessPassId: visit.access_pass_id,
+          hostStaffId,
+          visitorFullName: visit.visitor_full_name ?? visit.visitorFullName,
+          accessPassId,
           reason: revokeReason,
         },
       });
 
-      const updated = this.getVisitById(visitId, actor);
+      const updated = await this.getVisitById(visitId, actor);
       return { success: true, visit: updated.visit };
-    } catch (err) {
-      console.error('[VisitorService] revokeVisitorAccess error:', err);
-      return { success: false, error: 'Database error updating visitor after revocation.', status: 500 };
+    } catch (err: any) {
+      console.error('[VisitorService] revokeVisitorAccess error:', err.message || err);
+      return {
+        success: false,
+        error: err.message || 'Database error updating visitor after revocation.',
+        status: 500,
+      };
     }
   }
 
   /**
    * Cancels a visitor invitation: revokes active pass, retains historical record, and logs audit
    */
-  public cancelVisit(
+  public async cancelVisit(
     visitId: string,
     actor: SafeUser,
     reason?: string,
     ipAddress?: string,
     userAgent?: string
-  ): { success: boolean; visit?: VisitorVisitRecord; error?: string; status?: number } {
-    const db = getDatabase();
-
-    const visit = db.prepare('SELECT * FROM visitor_visits WHERE id = ?').get(visitId) as any;
+  ): Promise<{ success: boolean; visit?: VisitorVisitRecord; error?: string; status?: number }> {
+    const visit = await dbAdapter.queryOne<any>('SELECT * FROM visitor_visits WHERE id = $1', [visitId]);
     if (!visit) {
       return { success: false, error: 'Visitor invitation not found.', status: 404 };
     }
 
+    const hostStaffId = visit.host_staff_id ?? visit.hostStaffId;
     // Cross-user authorization check: STAFF can only cancel their own visits
-    if (actor.role === UserRole.STAFF && visit.host_staff_id !== actor.id) {
+    if (actor.role === UserRole.STAFF && hostStaffId !== actor.id) {
       return {
         success: false,
         error: 'Forbidden: You cannot cancel another staff member\'s visitor invitation.',
@@ -864,50 +884,63 @@ export class VisitorService {
     }
 
     const cancelReason = reason?.trim() || 'Visit cancelled by host staff member';
-
-    // If active access pass exists, automatically revoke it
-    if (visit.access_pass_id) {
-      const pass = db.prepare('SELECT status FROM access_passes WHERE id = ?').get(visit.access_pass_id) as any;
-      if (pass && pass.status === AccessPassStatus.ACTIVE) {
-        accessService.revokeAccessPass(
-          visit.access_pass_id,
-          actor,
-          `Cancelled visit: ${cancelReason}`,
-          ipAddress,
-          userAgent
-        );
-      }
-    }
-
+    const accessPassId = visit.access_pass_id ?? visit.accessPassId;
     const nowIso = new Date().toISOString();
 
     try {
-      db.prepare(`
-        UPDATE visitor_visits
-        SET status = ?, cancelled_at = ?, cancelled_by = ?, updated_at = ?
-        WHERE id = ?
-      `).run(VisitorVisitStatus.CANCELLED, nowIso, actor.id, nowIso, visitId);
+      await dbAdapter.transaction(async (tx) => {
+        // If active access pass exists, automatically revoke it inside this transaction
+        if (accessPassId) {
+          const pass = await tx.queryOne<{ status: string }>('SELECT status FROM access_passes WHERE id = $1', [accessPassId]);
+          if (pass && pass.status === AccessPassStatus.ACTIVE) {
+            const revokeResult = await accessService.revokeAccessPass(
+              accessPassId,
+              actor,
+              `Cancelled visit: ${cancelReason}`,
+              ipAddress,
+              userAgent,
+              tx
+            );
+            if (!revokeResult.success) {
+              throw new Error(revokeResult.error || 'Failed to revoke active access pass upon cancellation.');
+            }
+          }
+        }
 
-      auditService.log({
+        await tx.execute(
+          `
+          UPDATE visitor_visits
+          SET status = $1, cancelled_at = $2, cancelled_by = $3, updated_at = $4
+          WHERE id = $5
+        `,
+          [VisitorVisitStatus.CANCELLED, nowIso, actor.id, nowIso, visitId]
+        );
+      });
+
+      await auditService.log({
         actorId: actor.id,
         action: 'VISITOR_CANCELLED',
         ipAddress,
         userAgent,
         metadata: {
           visitId,
-          hostStaffId: visit.host_staff_id,
-          visitorFullName: visit.visitor_full_name,
+          hostStaffId,
+          visitorFullName: visit.visitor_full_name ?? visit.visitorFullName,
           reason: cancelReason,
           previousStatus: visit.status,
-          accessPassId: visit.access_pass_id,
+          accessPassId,
         },
       });
 
-      const updated = this.getVisitById(visitId, actor);
+      const updated = await this.getVisitById(visitId, actor);
       return { success: true, visit: updated.visit };
-    } catch (err) {
-      console.error('[VisitorService] cancelVisit error:', err);
-      return { success: false, error: 'Database error cancelling visitor invitation.', status: 500 };
+    } catch (err: any) {
+      console.error('[VisitorService] cancelVisit error:', err.message || err);
+      return {
+        success: false,
+        error: err.message || 'Database error cancelling visitor invitation.',
+        status: 500,
+      };
     }
   }
 }

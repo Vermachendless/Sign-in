@@ -273,7 +273,7 @@ export class AccessService {
   /**
    * Creates a VISITOR access pass for an authorized staff member's visitor
    */
-  public createVisitorAccessPass(
+  public async createVisitorAccessPass(
     actor: SafeUser,
     hostStaffId: string,
     options: {
@@ -282,14 +282,16 @@ export class AccessService {
       maxUses?: number | null;
     },
     ipAddress?: string,
-    userAgent?: string
-  ): { success: boolean; pass?: AccessPassRecord; error?: string } {
-    const db = getDatabase();
+    userAgent?: string,
+    txClient?: DbAdapter
+  ): Promise<{ success: boolean; pass?: AccessPassRecord; error?: string }> {
+    const db = txClient || dbAdapter;
 
     // 1. Verify host staff member exists and is active
-    const host = db.prepare(
-      'SELECT id, first_name, last_name, department, status FROM users WHERE id = ?'
-    ).get(hostStaffId) as { id: string; first_name: string; last_name: string; department: string; status: string } | undefined;
+    const host = await db.queryOne<{ id: string; first_name: string; last_name: string; department: string; status: string }>(
+      'SELECT id, first_name, last_name, department, status FROM users WHERE id = $1',
+      [hostStaffId]
+    );
 
     if (!host) {
       return { success: false, error: 'Host staff member not found.' };
@@ -331,7 +333,7 @@ export class AccessService {
     let displayCode = this.generateDisplayCode('VIS');
     let attempts = 0;
     while (attempts < 5) {
-      const existing = db.prepare('SELECT id FROM access_passes WHERE display_code = ?').get(displayCode);
+      const existing = await db.queryOne<{ id: string }>('SELECT id FROM access_passes WHERE display_code = $1', [displayCode]);
       if (!existing) break;
       displayCode = this.generateDisplayCode('VIS');
       attempts++;
@@ -341,29 +343,32 @@ export class AccessService {
     const createdAt = nowIso;
 
     try {
-      db.prepare(`
+      await db.execute(
+        `
         INSERT INTO access_passes (
           id, pass_type, event_id, host_staff_id, token_hash, display_code,
           valid_from, valid_until, status, max_uses, use_count,
           created_by, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
-      `).run(
-        passId,
-        PassType.VISITOR,
-        null,
-        hostStaffId,
-        tokenHash,
-        displayCode,
-        validFrom,
-        validUntil,
-        AccessPassStatus.ACTIVE,
-        maxUses,
-        actor.id,
-        createdAt,
-        createdAt
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 0, $11, $12, $13)
+        `,
+        [
+          passId,
+          PassType.VISITOR,
+          null,
+          hostStaffId,
+          tokenHash,
+          displayCode,
+          validFrom,
+          validUntil,
+          AccessPassStatus.ACTIVE,
+          maxUses,
+          actor.id,
+          createdAt,
+          createdAt,
+        ]
       );
 
-      auditService.log({
+      await auditService.log({
         actorId: actor.id,
         action: 'ACCESS_PASS_CREATED',
         ipAddress,
@@ -402,8 +407,11 @@ export class AccessService {
       };
 
       return { success: true, pass: passRecord };
-    } catch (err) {
-      console.error('[AccessService] createVisitorAccessPass error:', err);
+    } catch (err: any) {
+      console.error('[AccessService] createVisitorAccessPass error:', err.message || err);
+      if (txClient) {
+        throw err;
+      }
       return { success: false, error: 'Database error creating visitor access pass.' };
     }
   }
@@ -1032,9 +1040,10 @@ export class AccessService {
 
     // Check if pass is linked to an invitee
     let inviteeData: { id: string; fullName: string; organization?: string | null } | null = null;
-    const inviteeRow = db.prepare('SELECT id, full_name, organization FROM event_invitees WHERE access_pass_id = ?').get(passRow.id) as
-      | { id: string; full_name: string; organization: string | null }
-      | undefined;
+    const inviteeRow = await dbAdapter.queryOne<{ id: string; full_name: string; organization: string | null }>(
+      'SELECT id, full_name, organization FROM event_invitees WHERE access_pass_id = $1',
+      [passRow.id]
+    );
     if (inviteeRow) {
       inviteeData = {
         id: inviteeRow.id,
