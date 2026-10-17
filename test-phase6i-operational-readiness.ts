@@ -68,7 +68,7 @@ async function runPhase6ITests() {
   let createdBackupPath = '';
   {
     // Super admin can trigger backup
-    const backupResult = backupService.createBackup(
+    const backupResult = await backupService.createBackup(
       superAdmin,
       '197.210.55.24',
       'Mozilla/5.0 Operational Audit'
@@ -87,18 +87,18 @@ async function runPhase6ITests() {
   console.log('\n--- 3. BACKUP RBAC & ACCESS SECURITY ---');
   {
     // Regular admin is rejected
-    const adminAttempt = backupService.createBackup(regularAdmin);
+    const adminAttempt = await backupService.createBackup(regularAdmin);
     assert(adminAttempt.success === false, 'Regular ADMIN is strictly forbidden from creating database backups');
 
     // Staff is rejected
-    const staffAttempt = backupService.createBackup(staff);
+    const staffAttempt = await backupService.createBackup(staff);
     assert(staffAttempt.success === false, 'STAFF is strictly forbidden from creating database backups');
 
     // List backups security
-    const staffList = backupService.listBackups(staff);
+    const staffList = await backupService.listBackups(staff);
     assert(staffList.length === 0, 'STAFF cannot list database backups');
 
-    const superAdminList = backupService.listBackups(superAdmin);
+    const superAdminList = await backupService.listBackups(superAdmin);
     assert(superAdminList.length > 0, 'SUPER_ADMIN can list available backup files');
     assert(superAdminList.some(b => b.filename === createdBackupFilename), 'Created backup is listed in super admin backup list');
   }

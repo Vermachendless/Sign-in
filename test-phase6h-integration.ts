@@ -1024,7 +1024,7 @@ async function runPhase6HIntegrationTests() {
   );
 
   // Test F3: Daily Attendance Report reflects check-in and check-out counts accurately
-  const dailyReport = reportService.getAttendanceReport(
+  const dailyReport = await reportService.getAttendanceReport(
     adminUser,
     { startDate: customDate, endDate: customDate }
   );
@@ -1036,7 +1036,7 @@ async function runPhase6HIntegrationTests() {
   );
 
   // Test F4: Department Attendance Report aggregates department statistics
-  const deptReport = reportService.getAttendanceReport(
+  const deptReport = await reportService.getAttendanceReport(
     adminUser,
     { startDate: customDate, endDate: customDate, department: 'Engineering' }
   );

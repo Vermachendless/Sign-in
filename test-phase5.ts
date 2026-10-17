@@ -186,7 +186,7 @@ async function runPhase5Tests() {
   // ==========================================
   console.log('\n--- Section 3: Attendance Report Generation & Filtering ---');
 
-  const augReport = reportService.getAttendanceReport(adminUser, {
+  const augReport = await reportService.getAttendanceReport(adminUser, {
     startDate: '2026-08-01',
     endDate: '2026-08-03',
   });
@@ -201,7 +201,7 @@ async function runPhase5Tests() {
   assert(augReport.data!.summary.uniqueStaffAttended >= 1, 'Summary calculates distinct attended staff');
 
   // Filter by specific staff ID
-  const staff1Report = reportService.getAttendanceReport(adminUser, {
+  const staff1Report = await reportService.getAttendanceReport(adminUser, {
     startDate: '2026-08-01',
     endDate: '2026-08-03',
     staffId: testStaff1,
@@ -212,7 +212,7 @@ async function runPhase5Tests() {
   assert(staff1Report.data!.records.length === 2, 'Returns exactly 2 records for Staff 1');
 
   // Filter by completed status
-  const completedReport = reportService.getAttendanceReport(adminUser, {
+  const completedReport = await reportService.getAttendanceReport(adminUser, {
     startDate: '2026-08-01',
     endDate: '2026-08-03',
     attendanceStatus: 'CHECKED_OUT',
@@ -221,7 +221,7 @@ async function runPhase5Tests() {
   assert(completedReport.success && completedReport.data!.records.length === 2, 'Attendance status filter (CHECKED_OUT) matches only completed shifts');
 
   // Filter by incomplete status
-  const incompleteReport = reportService.getAttendanceReport(adminUser, {
+  const incompleteReport = await reportService.getAttendanceReport(adminUser, {
     startDate: '2026-08-01',
     endDate: '2026-08-03',
     attendanceStatus: 'CHECKED_IN',
@@ -230,7 +230,7 @@ async function runPhase5Tests() {
   assert(incompleteReport.success && incompleteReport.data!.records.length === 1, 'Attendance status filter (CHECKED_IN) matches only incomplete shifts');
 
   // Filter by department
-  const deptReport = reportService.getAttendanceReport(adminUser, {
+  const deptReport = await reportService.getAttendanceReport(adminUser, {
     startDate: '2026-08-01',
     endDate: '2026-08-03',
     department: staffRow.department || 'Engineering',
@@ -242,7 +242,7 @@ async function runPhase5Tests() {
   // ==========================================
   console.log('\n--- Section 4: Server-Side Pagination & Safe Sorting ---');
 
-  const page1 = reportService.getAttendanceReport(adminUser, {
+  const page1 = await reportService.getAttendanceReport(adminUser, {
     startDate: '2026-08-01',
     endDate: '2026-08-03',
     page: 1,
@@ -255,7 +255,7 @@ async function runPhase5Tests() {
   assert(page1.data!.pagination.totalPages === 2, 'Pagination metadata calculates total pages (2)');
   assert(page1.data!.pagination.hasNextPage === true, 'Pagination metadata indicates next page available');
 
-  const page2 = reportService.getAttendanceReport(adminUser, {
+  const page2 = await reportService.getAttendanceReport(adminUser, {
     startDate: '2026-08-01',
     endDate: '2026-08-03',
     page: 2,
@@ -266,7 +266,7 @@ async function runPhase5Tests() {
   assert(page2.data!.pagination.hasPrevPage === true, 'Page 2 indicates previous page available');
 
   // Sorting tests
-  const sortedAsc = reportService.getAttendanceReport(adminUser, {
+  const sortedAsc = await reportService.getAttendanceReport(adminUser, {
     startDate: '2026-08-01',
     endDate: '2026-08-03',
     sort: 'date',
@@ -274,7 +274,7 @@ async function runPhase5Tests() {
   });
   assert(sortedAsc.data!.records[0].date === '2026-08-01', 'Ascending date sort returns earliest date first');
 
-  const sortedDesc = reportService.getAttendanceReport(adminUser, {
+  const sortedDesc = await reportService.getAttendanceReport(adminUser, {
     startDate: '2026-08-01',
     endDate: '2026-08-03',
     sort: 'date',
@@ -295,7 +295,7 @@ async function runPhase5Tests() {
   assert(reportService.sanitizeCsvValue('Standard Name') === 'Standard Name', 'Normal string left intact without alteration');
   assert(reportService.sanitizeCsvValue('Name, with comma') === '"Name, with comma"', 'Comma containing string properly quoted per RFC 4180');
 
-  const csvResult = reportService.generateCsvExport(adminUser, {
+  const csvResult = await reportService.generateCsvExport(adminUser, {
     startDate: '2026-08-01',
     endDate: '2026-08-03',
   });
@@ -313,7 +313,7 @@ async function runPhase5Tests() {
   assert(reportService.sanitizeXmlValue('John & Jane <dev>') === 'John &amp; Jane &lt;dev&gt;', 'XML entities (&, <, >) safely escaped');
   assert(reportService.sanitizeXmlValue('=CMD') === '&apos;=CMD', 'Excel formula injection sanitized with apostrophe in XML');
 
-  const excelResult = reportService.generateExcelExport(adminUser, {
+  const excelResult = await reportService.generateExcelExport(adminUser, {
     startDate: '2026-08-01',
     endDate: '2026-08-03',
   });
@@ -331,14 +331,14 @@ async function runPhase5Tests() {
   console.log('\n--- Section 7: Security, SQL Injection & Data Privacy ---');
 
   // SQL Injection tests in filters
-  const sqlInjStaff = reportService.getAttendanceReport(adminUser, {
+  const sqlInjStaff = await reportService.getAttendanceReport(adminUser, {
     startDate: '2026-08-01',
     endDate: '2026-08-03',
     staffId: `' OR '1'='1`,
   });
   assert(sqlInjStaff.success && sqlInjStaff.data!.records.length === 0, 'SQL injection attempt in staffId harmlessly yields 0 records without error');
 
-  const sqlInjSort = reportService.getAttendanceReport(adminUser, {
+  const sqlInjSort = await reportService.getAttendanceReport(adminUser, {
     startDate: '2026-08-01',
     endDate: '2026-08-03',
     sort: 'date; DROP TABLE attendance;--',
@@ -381,7 +381,7 @@ async function runPhase5Tests() {
   console.log('\n--- Section 9: Phase 3 Attendance Mutation Regression ---');
 
   const todayStr = getTodayDateString();
-  const checkInAttempt = attendanceService.checkIn({
+  const checkInAttempt = await attendanceService.checkIn({
     staffId: staffRow.id,
     clientIp: '192.168.1.50',
     userAgent: 'Mocha/Test',

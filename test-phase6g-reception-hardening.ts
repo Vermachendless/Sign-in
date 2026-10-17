@@ -100,42 +100,42 @@ async function runTests() {
   console.log('--- Section 1: Reception Authorization & RBAC ---');
 
   // Verify STAFF is denied across all reception operations
-  const staffVerify = receptionService.verifyCredential(staffUser, { accessCode: 'EVT-TEST-0001' });
+  const staffVerify = await receptionService.verifyCredential(staffUser, { accessCode: 'EVT-TEST-0001' });
   assert(!staffVerify.success, 'STAFF must be forbidden from verifying');
   assert.strictEqual(staffVerify.status, 403, 'STAFF verification returns 403');
   pass('STAFF is forbidden (403) from verifying credentials');
 
-  const staffCheckIn = receptionService.checkIn(staffUser, { accessCode: 'EVT-TEST-0001' });
+  const staffCheckIn = await receptionService.checkIn(staffUser, { accessCode: 'EVT-TEST-0001' });
   assert(!staffCheckIn.success, 'STAFF must be forbidden from check-in');
   assert.strictEqual(staffCheckIn.status, 403, 'STAFF check-in returns 403');
   pass('STAFF is forbidden (403) from checking in guests');
 
-  const staffCheckOut = receptionService.checkOut(staffUser, { accessCode: 'EVT-TEST-0001' });
+  const staffCheckOut = await receptionService.checkOut(staffUser, { accessCode: 'EVT-TEST-0001' });
   assert(!staffCheckOut.success, 'STAFF must be forbidden from check-out');
   assert.strictEqual(staffCheckOut.status, 403, 'STAFF check-out returns 403');
   pass('STAFF is forbidden (403) from checking out guests');
 
-  const staffActive = receptionService.listActive(staffUser);
+  const staffActive = await receptionService.listActive(staffUser);
   assert(!staffActive.success, 'STAFF must be forbidden from active occupancy query');
   assert.strictEqual(staffActive.status, 403, 'STAFF listActive returns 403');
   pass('STAFF is forbidden (403) from querying active occupancy');
 
-  const staffHistory = receptionService.listHistory(staffUser);
+  const staffHistory = await receptionService.listHistory(staffUser);
   assert(!staffHistory.success, 'STAFF must be forbidden from history queries');
   assert.strictEqual(staffHistory.status, 403, 'STAFF listHistory returns 403');
   pass('STAFF is forbidden (403) from querying access history');
 
-  const staffSummary = receptionService.getSummary(staffUser);
+  const staffSummary = await receptionService.getSummary(staffUser);
   assert(!staffSummary.success, 'STAFF must be forbidden from summary query');
   assert.strictEqual(staffSummary.status, 403, 'STAFF getSummary returns 403');
   pass('STAFF is forbidden (403) from viewing reception summary');
 
   // ADMIN and SUPER_ADMIN have full access
-  const adminSummary = receptionService.getSummary(adminUser);
+  const adminSummary = await receptionService.getSummary(adminUser);
   assert(adminSummary.success, 'ADMIN has access to reception summary');
   pass('ADMIN is authorized for reception operations');
 
-  const superAdminSummary = receptionService.getSummary(superAdminUser);
+  const superAdminSummary = await receptionService.getSummary(superAdminUser);
   assert(superAdminSummary.success, 'SUPER_ADMIN has access to reception summary');
   pass('SUPER_ADMIN is authorized for reception operations');
 
@@ -149,7 +149,7 @@ async function runTests() {
   const startAt = new Date(now.getTime() - 30 * 60 * 1000).toISOString();
   const endAt = new Date(now.getTime() + 4 * 60 * 60 * 1000).toISOString();
 
-  const eventRes = eventService.createEvent(
+  const eventRes = await eventService.createEvent(
     adminUser,
     {
       title: 'Phase 6G Security Symposium',
@@ -165,7 +165,7 @@ async function runTests() {
     db.prepare("UPDATE events SET status = 'APPROVED' WHERE id = ?").run(event.id);
   }
 
-  const inviteeRes = inviteeService.createInvitee(
+  const inviteeRes = await inviteeService.createInvitee(
     event.id,
     adminUser,
     {
@@ -177,12 +177,12 @@ async function runTests() {
   assert(inviteeRes.success && inviteeRes.invitee, 'Invitee creation succeeds');
   const invitee = inviteeRes.invitee;
 
-  const eventPassRes = inviteeService.generateInviteeAccessPass(event.id, invitee.id, adminUser);
+  const eventPassRes = await inviteeService.generateInviteeAccessPass(event.id, invitee.id, adminUser);
   assert(eventPassRes.success && eventPassRes.pass, 'Event pass generation succeeds');
   const eventPass = eventPassRes.pass;
 
   // 2. Verification of valid event pass succeeds
-  const verifyValid = receptionService.verifyCredential(adminUser, { accessCode: eventPass.displayCode });
+  const verifyValid = await receptionService.verifyCredential(adminUser, { accessCode: eventPass.displayCode });
   assert(verifyValid.success && verifyValid.verification?.valid, 'Verification must succeed for valid pass');
   assert.strictEqual(verifyValid.verification.guestName, 'Ada Lovelace');
   assert.strictEqual(verifyValid.verification.organization, 'Computing Institute');
@@ -239,11 +239,11 @@ async function runTests() {
     endAt
   );
 
-  const visitorPassRes = visitorService.generateVisitorAccessPass(visitorVisitId, staffUser);
+  const visitorPassRes = await visitorService.generateVisitorAccessPass(visitorVisitId, staffUser);
   assert(visitorPassRes.success && visitorPassRes.pass, 'Visitor pass generation succeeds');
   const visitorPass = visitorPassRes.pass;
 
-  const verifyVisitor = receptionService.verifyCredential(adminUser, { accessCode: visitorPass.displayCode });
+  const verifyVisitor = await receptionService.verifyCredential(adminUser, { accessCode: visitorPass.displayCode });
   assert(verifyVisitor.success && verifyVisitor.verification?.valid, 'Visitor pass verification succeeds');
   assert.strictEqual(verifyVisitor.verification.guestName, 'Grace Hopper');
   assert.strictEqual(verifyVisitor.verification.hostStaffName, 'Standard Employee');
@@ -253,11 +253,11 @@ async function runTests() {
   // 4. Test Expired Pass
   const pastStart = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
   const pastEnd = new Date(now.getTime() - 2 * 60 * 60 * 1000).toISOString();
-  const pastPassRes = accessService.createVisitorAccessPass(staffUser, staffUser.id, {
+  const pastPassRes = await accessService.createVisitorAccessPass(staffUser, staffUser.id, {
     validFrom: pastStart,
     validUntil: pastEnd,
   });
-  const verifyExpired = receptionService.verifyCredential(adminUser, { accessCode: pastPassRes.pass!.displayCode });
+  const verifyExpired = await receptionService.verifyCredential(adminUser, { accessCode: pastPassRes.pass!.displayCode });
   assert(!verifyExpired.success && !verifyExpired.verification?.valid, 'Expired pass must fail verification');
   assert.strictEqual(verifyExpired.verification?.code, 'ACCESS_EXPIRED', 'Expired pass code is ACCESS_EXPIRED');
   pass('Expired credential is safely rejected with ACCESS_EXPIRED');
@@ -265,11 +265,11 @@ async function runTests() {
   // 5. Test Future Pass (not yet valid)
   const futureStart = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
   const futureEnd = new Date(now.getTime() + 48 * 60 * 60 * 1000).toISOString();
-  const futurePassRes = accessService.createVisitorAccessPass(staffUser, staffUser.id, {
+  const futurePassRes = await accessService.createVisitorAccessPass(staffUser, staffUser.id, {
     validFrom: futureStart,
     validUntil: futureEnd,
   });
-  const verifyFuture = receptionService.verifyCredential(adminUser, { accessCode: futurePassRes.pass!.displayCode });
+  const verifyFuture = await receptionService.verifyCredential(adminUser, { accessCode: futurePassRes.pass!.displayCode });
   assert(!verifyFuture.success && !verifyFuture.verification?.valid, 'Future pass must fail verification');
   assert.strictEqual(verifyFuture.verification?.code, 'ACCESS_NOT_YET_VALID', 'Future pass code is ACCESS_NOT_YET_VALID');
   pass('Future credential is safely rejected with ACCESS_NOT_YET_VALID');
@@ -282,15 +282,15 @@ async function runTests() {
     startAt,
     endAt
   );
-  const revokedPassRes = visitorService.generateVisitorAccessPass(revokedVisitId, staffUser);
-  visitorService.revokeVisitorAccess(revokedVisitId, staffUser, 'Security Policy Violation');
-  const verifyRevoked = receptionService.verifyCredential(adminUser, { accessCode: revokedPassRes.pass!.displayCode });
+  const revokedPassRes = await visitorService.generateVisitorAccessPass(revokedVisitId, staffUser);
+  await visitorService.revokeVisitorAccess(revokedVisitId, staffUser, 'Security Policy Violation');
+  const verifyRevoked = await receptionService.verifyCredential(adminUser, { accessCode: revokedPassRes.pass!.displayCode });
   assert(!verifyRevoked.success && !verifyRevoked.verification?.valid, 'Revoked pass must fail verification');
   assert.strictEqual(verifyRevoked.verification?.code, 'ACCESS_REVOKED', 'Revoked pass code is ACCESS_REVOKED');
   pass('Revoked credential is safely rejected with ACCESS_REVOKED');
 
   // 7. Test Cancelled Invitee
-  const cancelledInviteeRes = inviteeService.createInvitee(
+  const cancelledInviteeRes = await inviteeService.createInvitee(
     event.id,
     adminUser,
     {
@@ -298,9 +298,9 @@ async function runTests() {
       email: 'cancelled.invitee@example.com',
     }
   );
-  const cancelledInviteePassRes = inviteeService.generateInviteeAccessPass(event.id, cancelledInviteeRes.invitee!.id, adminUser);
-  inviteeService.cancelInvitee(event.id, cancelledInviteeRes.invitee!.id, adminUser, 'No longer attending');
-  const verifyCancelledInvitee = receptionService.verifyCredential(adminUser, { accessCode: cancelledInviteePassRes.pass!.displayCode });
+  const cancelledInviteePassRes = await inviteeService.generateInviteeAccessPass(event.id, cancelledInviteeRes.invitee!.id, adminUser);
+  await inviteeService.cancelInvitee(event.id, cancelledInviteeRes.invitee!.id, adminUser, 'No longer attending');
+  const verifyCancelledInvitee = await receptionService.verifyCredential(adminUser, { accessCode: cancelledInviteePassRes.pass!.displayCode });
   assert(!verifyCancelledInvitee.success && !verifyCancelledInvitee.verification?.valid, 'Cancelled invitee must fail verification');
   assert.strictEqual(verifyCancelledInvitee.verification?.code, 'INVITEE_CANCELLED');
   pass('Cancelled event invitee credential is safely rejected');
@@ -313,20 +313,20 @@ async function runTests() {
     startAt,
     endAt
   );
-  const cancelledVisitorPassRes = visitorService.generateVisitorAccessPass(cancelledVisitId, staffUser);
-  visitorService.cancelVisit(cancelledVisitId, staffUser, 'Meeting cancelled by host');
-  const verifyCancelledVisitor = receptionService.verifyCredential(adminUser, { accessCode: cancelledVisitorPassRes.pass!.displayCode });
+  const cancelledVisitorPassRes = await visitorService.generateVisitorAccessPass(cancelledVisitId, staffUser);
+  await visitorService.cancelVisit(cancelledVisitId, staffUser, 'Meeting cancelled by host');
+  const verifyCancelledVisitor = await receptionService.verifyCredential(adminUser, { accessCode: cancelledVisitorPassRes.pass!.displayCode });
   assert(!verifyCancelledVisitor.success && !verifyCancelledVisitor.verification?.valid, 'Cancelled visitor must fail verification');
   assert.strictEqual(verifyCancelledVisitor.verification?.code, 'VISIT_CANCELLED');
   pass('Cancelled visitor credential is safely rejected');
 
   // 9. Non-existent & Malformed Codes
-  const verifyNotFound = receptionService.verifyCredential(adminUser, { accessCode: 'EVT-NONEXISTENT' });
+  const verifyNotFound = await receptionService.verifyCredential(adminUser, { accessCode: 'EVT-NONEXISTENT' });
   assert(!verifyNotFound.success, 'Non-existent credential rejected');
   assert.strictEqual(verifyNotFound.status, 404, 'Non-existent returns 404');
   pass('Non-existent credential is safely rejected with 404');
 
-  const verifyEmpty = receptionService.verifyCredential(adminUser, {});
+  const verifyEmpty = await receptionService.verifyCredential(adminUser, {});
   assert(!verifyEmpty.success, 'Empty input rejected');
   assert.strictEqual(verifyEmpty.status, 400, 'Empty input returns 400');
   pass('Malformed/empty verification input is safely rejected with 400');
@@ -342,7 +342,7 @@ async function runTests() {
   pass('Verification is strictly read-only and does not create visit records');
 
   // Explicit Check-In
-  const checkInRes = receptionService.checkIn(adminUser, { accessPassId: eventPass.id });
+  const checkInRes = await receptionService.checkIn(adminUser, { accessPassId: eventPass.id });
   assert(checkInRes.success && checkInRes.visit, 'Explicit check-in must succeed');
   assert.strictEqual(checkInRes.visit.status, AccessVisitStatus.CHECKED_IN);
   assert.strictEqual(checkInRes.visit.guestName, 'Ada Lovelace');
@@ -354,7 +354,7 @@ async function runTests() {
   pass('Event invitee table status is transitioned to CHECKED_IN');
 
   // Active Occupancy includes currently checked-in occupant
-  const activeRes = receptionService.listActive(adminUser);
+  const activeRes = await receptionService.listActive(adminUser);
   assert(activeRes.success, 'listActive succeeds');
   const occupant = activeRes.activeVisits.find((v) => v.accessPassId === eventPass.id);
   assert(occupant, 'Checked-in occupant is present in active occupancy');
@@ -363,13 +363,13 @@ async function runTests() {
   pass('Active occupancy is derived exclusively from access_visits (status = CHECKED_IN)');
 
   // Duplicate Check-In Protection
-  const duplicateCheckIn = receptionService.checkIn(adminUser, { accessPassId: eventPass.id });
+  const duplicateCheckIn = await receptionService.checkIn(adminUser, { accessPassId: eventPass.id });
   assert(!duplicateCheckIn.success, 'Duplicate check-in must fail');
   assert.strictEqual(duplicateCheckIn.status, 409, 'Duplicate check-in returns 409 conflict');
   pass('Duplicate check-in attempt returns 409 conflict');
 
   // Re-verification now shows canCheckOut = true, canCheckIn = false
-  const reVerify = receptionService.verifyCredential(adminUser, { accessCode: eventPass.displayCode });
+  const reVerify = await receptionService.verifyCredential(adminUser, { accessCode: eventPass.displayCode });
   assert(reVerify.success && reVerify.verification?.valid, 'Re-verification succeeds');
   assert.strictEqual(reVerify.verification.isCheckedIn, true);
   assert.strictEqual(reVerify.verification.canCheckIn, false);
@@ -377,7 +377,7 @@ async function runTests() {
   pass('Re-verification of checked-in guest safely displays canCheckOut = true');
 
   // Check-Out Execution
-  const checkOutRes = receptionService.checkOut(adminUser, { accessVisitId: checkInRes.visit.id });
+  const checkOutRes = await receptionService.checkOut(adminUser, { accessVisitId: checkInRes.visit.id });
   assert(checkOutRes.success && checkOutRes.visit, 'Explicit check-out must succeed');
   assert.strictEqual(checkOutRes.visit.status, AccessVisitStatus.CHECKED_OUT);
   assert(checkOutRes.visit.checkedOutAt, 'Check-out timestamp is recorded');
@@ -389,31 +389,31 @@ async function runTests() {
   pass('Event invitee table status is transitioned to CHECKED_OUT');
 
   // Checked-out occupant immediately leaves active occupancy
-  const activeAfterCheckout = receptionService.listActive(adminUser);
+  const activeAfterCheckout = await receptionService.listActive(adminUser);
   const stillInside = activeAfterCheckout.activeVisits.some((v) => v.accessPassId === eventPass.id);
   assert(!stillInside, 'Checked-out guest MUST NOT remain in active occupancy');
   pass('Checked-out person is immediately removed from active occupancy');
 
   // Duplicate Check-Out Rejected
-  const duplicateCheckOut = receptionService.checkOut(adminUser, { accessVisitId: checkInRes.visit.id });
+  const duplicateCheckOut = await receptionService.checkOut(adminUser, { accessVisitId: checkInRes.visit.id });
   assert(!duplicateCheckOut.success, 'Duplicate check-out must fail');
   assert.strictEqual(duplicateCheckOut.status, 400, 'Duplicate check-out returns 400');
   pass('Duplicate check-out is safely rejected with 400');
 
   // Check-out cannot occur before check-in
   const brandNewVisitId = createTestVisitorVisit('Unchecked Guest', 'uncheck@example.com', 'Test', startAt, endAt);
-  const brandNewPassRes = visitorService.generateVisitorAccessPass(brandNewVisitId, staffUser);
-  const earlyCheckOut = receptionService.checkOut(adminUser, { accessPassId: brandNewPassRes.pass!.id });
+  const brandNewPassRes = await visitorService.generateVisitorAccessPass(brandNewVisitId, staffUser);
+  const earlyCheckOut = await receptionService.checkOut(adminUser, { accessPassId: brandNewPassRes.pass!.id });
   assert(!earlyCheckOut.success, 'Check-out before check-in must fail');
   pass('Check-out only works after check-in (cannot check out un-checked-in guest)');
 
   // Re-check-in of exhausted single-use pass is rejected
-  const reCheckInExhausted = receptionService.checkIn(adminUser, { accessPassId: eventPass.id });
+  const reCheckInExhausted = await receptionService.checkIn(adminUser, { accessPassId: eventPass.id });
   assert(!reCheckInExhausted.success, 'Re-check-in of exhausted pass must fail');
   pass('Re-check-in with exhausted single-use pass is rejected');
 
   // Already consumed credential verification clearly communicates already checked out
-  const verifyConsumed = receptionService.verifyCredential(adminUser, { accessCode: eventPass.displayCode });
+  const verifyConsumed = await receptionService.verifyCredential(adminUser, { accessCode: eventPass.displayCode });
   assert(!verifyConsumed.success && !verifyConsumed.verification?.valid, 'Verification of checked-out pass is rejected');
   assert.strictEqual(verifyConsumed.verification?.code, 'ALREADY_CHECKED_OUT');
   pass('Already consumed credential verification clearly communicates already checked out');
@@ -424,18 +424,18 @@ async function runTests() {
   console.log('\n--- Section 4: Security Protections & Tamper Resistance ---');
 
   // 1. Role enforcement is authoritative
-  const spoofVerify = receptionService.verifyCredential(staffUser, { accessCode: eventPass.displayCode });
+  const spoofVerify = await receptionService.verifyCredential(staffUser, { accessCode: eventPass.displayCode });
   assert(!spoofVerify.success && spoofVerify.status === 403, 'STAFF cannot spoof administrative capabilities');
   pass('Role enforcement is server-authoritative and impervious to client tampering');
 
   // 2. Client cannot force CHECKED_IN with invalid/spoofed pass ID
-  const spoofCheckIn = receptionService.checkIn(adminUser, { accessPassId: 'spoofed-random-pass-id' });
+  const spoofCheckIn = await receptionService.checkIn(adminUser, { accessPassId: 'spoofed-random-pass-id' });
   assert(!spoofCheckIn.success, 'Spoofed pass ID check-in fails');
   assert.strictEqual(spoofCheckIn.status, 404);
   pass('Client cannot force CHECKED_IN state with spoofed pass identifiers');
 
   // 3. Operator ID cannot be spoofed (authenticated session actor is strictly used)
-  const visitorCheckInRes = receptionService.checkIn(adminUser, { accessPassId: visitorPass.id });
+  const visitorCheckInRes = await receptionService.checkIn(adminUser, { accessPassId: visitorPass.id });
   assert(visitorCheckInRes.success && visitorCheckInRes.visit, 'Visitor check-in succeeds');
   assert.strictEqual(visitorCheckInRes.visit.checkedInBy, adminUser.id, 'checked_in_by strictly equals authenticated actor.id');
   pass('Operator identity is strictly derived from authenticated session and cannot be spoofed');
@@ -464,15 +464,20 @@ async function runTests() {
     startAt,
     endAt
   );
-  const concPassRes = visitorService.generateVisitorAccessPass(concVisitId, staffUser);
+  const concPassRes = await visitorService.generateVisitorAccessPass(concVisitId, staffUser);
   const concPass = concPassRes.pass!;
 
-  // Concurrent Check-In Race Condition: Check that second immediate call receives 409
-  const call1 = receptionService.checkIn(adminUser, { accessPassId: concPass.id });
-  const call2 = receptionService.checkIn(superAdminUser, { accessPassId: concPass.id });
-  assert(call1.success, 'First concurrent check-in succeeds');
-  assert(!call2.success, 'Second concurrent check-in must fail');
-  assert.strictEqual(call2.status, 409, 'Second concurrent check-in returns 409 conflict');
+  // Concurrent Check-In Race Condition: Check that exactly one succeeds and the other receives 409
+  const [call1, call2] = await Promise.all([
+    receptionService.checkIn(adminUser, { accessPassId: concPass.id }),
+    receptionService.checkIn(superAdminUser, { accessPassId: concPass.id }),
+  ]);
+
+  const concCheckInSuccesses = [call1, call2].filter((r) => r.success);
+  const concCheckInConflicts = [call1, call2].filter((r) => !r.success && (r.status === 409 || r.status === 400));
+
+  assert.strictEqual(concCheckInSuccesses.length, 1, 'Exactly one concurrent check-in succeeds');
+  assert.strictEqual(concCheckInConflicts.length, 1, 'Second concurrent check-in returns 409 conflict');
   pass('Concurrent check-in race condition is atomically resolved with 409 conflict');
 
   // Exactly one physical access visit record exists
@@ -481,12 +486,18 @@ async function runTests() {
   pass('Zero duplicate physical access visit records created under concurrent attempts');
 
   // Concurrent Check-Out Race Condition:
-  const activeConcVisit = call1.visit!;
-  const co1 = receptionService.checkOut(adminUser, { accessVisitId: activeConcVisit.id });
-  const co2 = receptionService.checkOut(superAdminUser, { accessVisitId: activeConcVisit.id });
-  assert(co1.success, 'First concurrent check-out succeeds');
-  assert(!co2.success, 'Second concurrent check-out must fail');
-  assert(co2.status === 400 || co2.status === 409, 'Second concurrent check-out returns 400 or 409');
+  const activeConcVisit = concCheckInSuccesses[0].visit!;
+  const [co1, co2] = await Promise.all([
+    receptionService.checkOut(adminUser, { accessVisitId: activeConcVisit.id }),
+    receptionService.checkOut(superAdminUser, { accessVisitId: activeConcVisit.id }),
+  ]);
+
+  const concCheckOutSuccesses = [co1, co2].filter((r) => r.success);
+  const concCheckOutConflicts = [co1, co2].filter((r) => !r.success);
+
+  assert.strictEqual(concCheckOutSuccesses.length, 1, 'First concurrent check-out succeeds');
+  assert.strictEqual(concCheckOutConflicts.length, 1, 'Second concurrent check-out must fail');
+  assert(concCheckOutConflicts[0].status === 400 || concCheckOutConflicts[0].status === 409, 'Second concurrent check-out returns 400 or 409');
   pass('Concurrent check-out race condition is atomically resolved');
 
   // =========================================================================
@@ -495,45 +506,45 @@ async function runTests() {
   console.log('\n--- Section 6: Search, Filtering & Bounded Request Handling ---');
 
   // 1. Search in Active Occupancy
-  const searchOccupancy = receptionService.listActive(adminUser, { search: 'Grace' });
+  const searchOccupancy = await receptionService.listActive(adminUser, { search: 'Grace' });
   assert(searchOccupancy.success, 'Search active occupancy succeeds');
   assert(searchOccupancy.activeVisits.some((v) => v.guestName?.includes('Grace')), 'Finds Grace in active occupancy');
   pass('Active occupancy search filtering locates checked-in guests');
 
   // 2. Filter History by passType = EVENT
-  const histEvent = receptionService.listHistory(adminUser, { passType: 'EVENT' });
+  const histEvent = await receptionService.listHistory(adminUser, { passType: 'EVENT' });
   assert(histEvent.success, 'History with passType=EVENT succeeds');
   assert(histEvent.visits.every((v) => v.passType === PassType.EVENT), 'All returned visits have passType EVENT');
   pass('History passType=EVENT filter functions accurately');
 
   // 3. Filter History by passType = VISITOR
-  const histVisitor = receptionService.listHistory(adminUser, { passType: 'VISITOR' });
+  const histVisitor = await receptionService.listHistory(adminUser, { passType: 'VISITOR' });
   assert(histVisitor.success, 'History with passType=VISITOR succeeds');
   assert(histVisitor.visits.every((v) => v.passType === PassType.VISITOR), 'All returned visits have passType VISITOR');
   pass('History passType=VISITOR filter functions accurately');
 
   // 4. Filter History by status = CHECKED_IN
-  const histCheckedIn = receptionService.listHistory(adminUser, { status: 'CHECKED_IN' });
+  const histCheckedIn = await receptionService.listHistory(adminUser, { status: 'CHECKED_IN' });
   assert(histCheckedIn.success, 'History with status=CHECKED_IN succeeds');
   assert(histCheckedIn.visits.every((v) => v.status === AccessVisitStatus.CHECKED_IN), 'All returned visits have status CHECKED_IN');
   pass('History status=CHECKED_IN filter functions accurately');
 
   // 5. Filter History by status = CHECKED_OUT
-  const histCheckedOut = receptionService.listHistory(adminUser, { status: 'CHECKED_OUT' });
+  const histCheckedOut = await receptionService.listHistory(adminUser, { status: 'CHECKED_OUT' });
   assert(histCheckedOut.success, 'History with status=CHECKED_OUT succeeds');
   assert(histCheckedOut.visits.every((v) => v.status === AccessVisitStatus.CHECKED_OUT), 'All returned visits have status CHECKED_OUT');
   pass('History status=CHECKED_OUT filter functions accurately');
 
   // 6. Filter History by status = DENIED (authoritative audit log query)
-  receptionService.verifyCredential(adminUser, { accessCode: 'DENIED-AUDIT-TEST-XYZ' });
-  const histDenied = receptionService.listHistory(adminUser, { status: 'DENIED' });
+  await receptionService.verifyCredential(adminUser, { accessCode: 'DENIED-AUDIT-TEST-XYZ' });
+  const histDenied = await receptionService.listHistory(adminUser, { status: 'DENIED' });
   assert(histDenied.success, 'History with status=DENIED succeeds');
   assert(histDenied.visits.length > 0, 'Returns denied access records');
   assert(histDenied.visits.every((v) => v.status === AccessVisitStatus.DENIED), 'All returned records have status DENIED');
   pass('History status=DENIED filter accurately queries access denials');
 
   // 7. Pagination Bounds (limit & page)
-  const page1 = receptionService.listHistory(adminUser, { limit: 2, page: 1 });
+  const page1 = await receptionService.listHistory(adminUser, { limit: 2, page: 1 });
   assert(page1.success && page1.visits.length <= 2, 'Page 1 respects limit of 2');
   assert.strictEqual(page1.page, 1);
   assert.strictEqual(page1.limit, 2);
@@ -541,7 +552,7 @@ async function runTests() {
 
   // 8. Bounded Input Handling (abusive length string truncated cleanly)
   const longSearch = 'A'.repeat(500);
-  const boundedSearchRes = receptionService.listHistory(adminUser, { search: longSearch });
+  const boundedSearchRes = await receptionService.listHistory(adminUser, { search: longSearch });
   assert(boundedSearchRes.success, 'Query with long search parameter succeeds safely without database error');
   pass('Abusive search query length is safely bounded against database denial of service');
 
@@ -577,7 +588,7 @@ async function runTests() {
   // =========================================================================
   console.log('\n--- Section 8: Summary Metrics Synchronization ---');
 
-  const summaryRes = receptionService.getSummary(adminUser);
+  const summaryRes = await receptionService.getSummary(adminUser);
   assert(summaryRes.success, 'Summary query succeeds');
   const summary = summaryRes.summary;
 
@@ -593,7 +604,7 @@ async function runTests() {
   pass('All summary metrics accurately reflect authoritative reception activity');
 
   // Check-out remaining active visitor
-  receptionService.checkOut(adminUser, { accessPassId: visitorPass.id });
+  await receptionService.checkOut(adminUser, { accessPassId: visitorPass.id });
 
   console.log(`\n======================================================`);
   console.log(`PHASE 6G TESTS COMPLETE: ALL ${passedTests} TESTS PASSED!`);

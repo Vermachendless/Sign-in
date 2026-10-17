@@ -27,14 +27,14 @@ router.use(requireReceptionAdmin);
  * POST /api/reception/verify
  * Verifies access credential (code or QR token) without checking in or consuming uses
  */
-router.post('/verify', (req: AuthenticatedRequest, res: Response) => {
+router.post('/verify', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const actor = req.user!;
     const { accessCode, token } = req.body || {};
     const { ip: clientIp } = extractClientIp(req);
     const userAgent = req.headers['user-agent'] || 'Unknown';
 
-    const result = receptionService.verifyCredential(
+    const result = await receptionService.verifyCredential(
       actor,
       { accessCode, token },
       clientIp,
@@ -63,14 +63,14 @@ router.post('/verify', (req: AuthenticatedRequest, res: Response) => {
  * POST /api/reception/check-in
  * Records physical arrival and transitions status to CHECKED_IN
  */
-router.post('/check-in', (req: AuthenticatedRequest, res: Response) => {
+router.post('/check-in', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const actor = req.user!;
     const { accessPassId, accessCode, token } = req.body || {};
     const { ip: clientIp } = extractClientIp(req);
     const userAgent = req.headers['user-agent'] || 'Unknown';
 
-    const result = receptionService.checkIn(
+    const result = await receptionService.checkIn(
       actor,
       { accessPassId, accessCode, token },
       clientIp,
@@ -97,14 +97,14 @@ router.post('/check-in', (req: AuthenticatedRequest, res: Response) => {
  * POST /api/reception/check-out
  * Records physical departure and transitions status to CHECKED_OUT
  */
-router.post('/check-out', (req: AuthenticatedRequest, res: Response) => {
+router.post('/check-out', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const actor = req.user!;
     const { accessVisitId, accessPassId, accessCode } = req.body || {};
     const { ip: clientIp } = extractClientIp(req);
     const userAgent = req.headers['user-agent'] || 'Unknown';
 
-    const result = receptionService.checkOut(
+    const result = await receptionService.checkOut(
       actor,
       { accessVisitId, accessPassId, accessCode },
       clientIp,
@@ -131,12 +131,12 @@ router.post('/check-out', (req: AuthenticatedRequest, res: Response) => {
  * GET /api/reception/active
  * Authoritative query for currently checked-in guests on premises
  */
-router.get('/active', (req: AuthenticatedRequest, res: Response) => {
+router.get('/active', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const actor = req.user!;
     const search = typeof req.query.search === 'string' ? req.query.search.trim().slice(0, 100) : undefined;
 
-    const result = receptionService.listActive(actor, { search });
+    const result = await receptionService.listActive(actor, { search });
 
     if (!result.success) {
       return sendError(res, result.status || 400, ApiErrorCode.FORBIDDEN, result.error || 'Failed to retrieve active guests.');
@@ -156,7 +156,7 @@ router.get('/active', (req: AuthenticatedRequest, res: Response) => {
  * GET /api/reception/history
  * Historical reception access visits with pagination & search/filters
  */
-router.get('/history', (req: AuthenticatedRequest, res: Response) => {
+router.get('/history', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const actor = req.user!;
     const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
@@ -168,7 +168,7 @@ router.get('/history', (req: AuthenticatedRequest, res: Response) => {
     const startDate = typeof req.query.startDate === 'string' ? req.query.startDate : undefined;
     const endDate = typeof req.query.endDate === 'string' ? req.query.endDate : undefined;
 
-    const result = receptionService.listHistory(actor, {
+    const result = await receptionService.listHistory(actor, {
       search,
       status,
       passType,
@@ -199,10 +199,10 @@ router.get('/history', (req: AuthenticatedRequest, res: Response) => {
  * GET /api/reception/summary
  * Summary metrics for reception dashboard
  */
-router.get('/summary', (req: AuthenticatedRequest, res: Response) => {
+router.get('/summary', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const actor = req.user!;
-    const result = receptionService.getSummary(actor);
+    const result = await receptionService.getSummary(actor);
 
     if (!result.success) {
       return sendError(res, result.status || 400, ApiErrorCode.FORBIDDEN, result.error || 'Failed to retrieve reception summary.');

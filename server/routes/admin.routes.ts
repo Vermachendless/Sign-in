@@ -424,13 +424,13 @@ router.post('/office-network/remove', requireSuperAdmin, async (req: Authenticat
  * POST /api/admin/backups
  * Super Admin only: Trigger atomic, consistent point-in-time database backup
  */
-router.post('/backups', requireSuperAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.post('/backups', requireSuperAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const actor = req.user!;
     const { ip: clientIp } = extractClientIp(req);
     const userAgent = req.headers['user-agent'] || 'Unknown';
 
-    const result = backupService.createBackup(actor, clientIp, userAgent);
+    const result = await backupService.createBackup(actor, clientIp, userAgent);
 
     if (!result.success) {
       return sendError(res, 500, ApiErrorCode.INTERNAL_ERROR, result.error || 'Failed to create database backup.');
@@ -453,10 +453,10 @@ router.post('/backups', requireSuperAdmin, (req: AuthenticatedRequest, res: Resp
  * GET /api/admin/backups
  * Super Admin only: List verified backups metadata (does not expose raw files)
  */
-router.get('/backups', requireSuperAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.get('/backups', requireSuperAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const actor = req.user!;
-    const backups = backupService.listBackups(actor);
+    const backups = await backupService.listBackups(actor);
     return sendSuccess(res, { backups });
   } catch (error) {
     console.error('[AdminRoutes] listBackups error:', error);

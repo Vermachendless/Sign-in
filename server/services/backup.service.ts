@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { getDatabase } from '../db/index.ts';
+import { dbAdapter } from '../db/adapter.ts';
 import { auditService } from './audit.service.ts';
 import { SafeUser, UserRole } from '../../src/types/index.ts';
 
@@ -15,10 +16,42 @@ export interface DatabaseBackupResult {
   error?: string;
 }
 
+export interface DatabaseBackupItem {
+  filename: string;
+  sizeBytes: number;
+  createdAt: string;
+}
+
 export interface DatabaseRestoreResult {
   success: boolean;
   tablesVerified?: Record<string, number>;
   error?: string;
+}
+
+/**
+ * Wraps a synchronous value into a dual-mode result that behaves as:
+ * 1. Synchronous value for immediate local access (e.g. res.success, files.length)
+ * 2. Asynchronous Promise (Thenable) for await callers in async pipelines
+ */
+function makeDualResult<T extends object>(val: T): Promise<T> & T {
+  if (Array.isArray(val)) {
+    const p = Promise.resolve(val) as any;
+    p.length = val.length;
+    p[Symbol.iterator] = val[Symbol.iterator].bind(val);
+    p.map = val.map.bind(val);
+    p.forEach = val.forEach.bind(val);
+    p.filter = val.filter.bind(val);
+    p.find = val.find.bind(val);
+    p.some = val.some.bind(val);
+    p.every = val.every.bind(val);
+    p.reduce = val.reduce.bind(val);
+    p.slice = val.slice.bind(val);
+    for (let i = 0; i < val.length; i++) {
+      p[i] = val[i];
+    }
+    return p;
+  }
+  return Object.assign(Promise.resolve(val), val) as any;
 }
 
 export class BackupService {
@@ -36,20 +69,32 @@ export class BackupService {
   }
 
   /**
-   * Creates a consistent point-in-time backup using SQLite's atomic VACUUM INTO.
-   * This is fully safe under concurrent WAL mode operations without locking or corrupting writes.
+   * Creates a consistent point-in-time backup.
+   *
+   * Database-engine awareness:
+   * - SQLite: Uses atomic VACUUM INTO for consistent WAL snapshot without locking.
+   * - PostgreSQL: Fails explicitly with an actionable message directing operators
+   *   to Google Cloud SQL Automated Backups rather than performing unverified file copies.
    */
   public createBackup(
     actor: SafeUser,
     clientIp?: string,
     userAgent?: string
-  ): DatabaseBackupResult {
+  ): Promise<DatabaseBackupResult> & DatabaseBackupResult {
     // 1. RBAC Check: SUPER_ADMIN only
     if (actor.role !== UserRole.SUPER_ADMIN) {
-      return {
+      return makeDualResult({
         success: false,
         error: 'Forbidden: Database backups can only be created by Super Administrators.',
-      };
+      });
+    }
+
+    // 2. Engine Check: In PostgreSQL mode, fail explicitly with an actionable error
+    if (dbAdapter.isPostgres()) {
+      return makeDualResult({
+        success: false,
+        error: 'PostgreSQL database backups cannot be generated via SQLite file-level commands. Backups for PostgreSQL must be configured and managed through Google Cloud SQL Automated Backups or GCP Cloud Console.',
+      });
     }
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -60,15 +105,14 @@ export class BackupService {
       const db = getDatabase();
 
       // Execute atomic VACUUM INTO
-      // Escaping path for safety
       const escapedPath = targetPath.replace(/'/g, "''");
       db.exec(`VACUUM INTO '${escapedPath}';`);
 
       if (!fs.existsSync(targetPath)) {
-        return {
+        return makeDualResult({
           success: false,
           error: 'Backup file creation failed.',
-        };
+        });
       }
 
       const stats = fs.statSync(targetPath);
@@ -77,7 +121,7 @@ export class BackupService {
       const counts = this.verifyBackupFile(targetPath);
 
       // Audit the backup creation
-      auditService.log({
+      void auditService.log({
         actorId: actor.id,
         action: 'DATABASE_BACKUP_CREATED',
         ipAddress: clientIp,
@@ -89,27 +133,32 @@ export class BackupService {
         },
       });
 
-      return {
+      return makeDualResult({
         success: true,
         filename,
         backupPath: targetPath,
         fileSizeBytes: stats.size,
         tableCounts: counts,
         checksumVerified: true,
-      };
+      });
     } catch (err: any) {
       console.error('[BackupService] createBackup error:', err);
-      return {
+      return makeDualResult({
         success: false,
         error: `Database backup error: ${err.message || String(err)}`,
-      };
+      });
     }
   }
 
   /**
    * Verifies the integrity and table record counts of a backup SQLite file.
+   * Throws if invoked in PostgreSQL mode as SQLite pragmas are not applicable.
    */
   public verifyBackupFile(filePath: string): Record<string, number> {
+    if (dbAdapter.isPostgres()) {
+      throw new Error('SQLite file verification is not applicable in PostgreSQL mode.');
+    }
+
     const verifyDb = new DatabaseSync(filePath, { readOnly: true });
 
     try {
@@ -138,15 +187,27 @@ export class BackupService {
   }
 
   /**
-   * List existing backups metadata without exposing file contents directly
+   * List existing backups metadata without exposing file contents directly.
+   *
+   * Database-engine awareness:
+   * - In SQLite mode: Lists local backup files created via VACUUM INTO.
+   * - In PostgreSQL mode: Returns an empty list to avoid misleadingly presenting
+   *   local SQLite files as PostgreSQL backups.
    */
-  public listBackups(actor: SafeUser): Array<{ filename: string; sizeBytes: number; createdAt: string }> {
+  public listBackups(
+    actor: SafeUser
+  ): Promise<Array<DatabaseBackupItem>> & Array<DatabaseBackupItem> {
     if (actor.role !== UserRole.SUPER_ADMIN) {
-      return [];
+      return makeDualResult([]);
+    }
+
+    // In PostgreSQL mode, do not misleadingly present local SQLite .db files
+    if (dbAdapter.isPostgres()) {
+      return makeDualResult([]);
     }
 
     if (!fs.existsSync(this.backupDir)) {
-      return [];
+      return makeDualResult([]);
     }
 
     const files = fs.readdirSync(this.backupDir)
@@ -162,7 +223,7 @@ export class BackupService {
       })
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
-    return files;
+    return makeDualResult(files);
   }
 }
 

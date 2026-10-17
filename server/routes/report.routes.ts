@@ -2,7 +2,6 @@ import { Router, Response } from 'express';
 import { requireAuth, requireAdmin, AuthenticatedRequest } from '../middleware/auth.ts';
 import { reportService } from '../services/report.service.ts';
 import { sendSuccess, sendError, ApiErrorCode } from '../utils/apiResponse.ts';
-import { getDatabase } from '../db/index.ts';
 import { AttendanceReportQuery } from '../../src/types/index.ts';
 
 const router = Router();
@@ -14,17 +13,9 @@ router.use(requireAuth, requireAdmin);
  * GET /api/admin/reports/departments
  * Returns distinct departments for populating dropdown filters
  */
-router.get('/departments', (req: AuthenticatedRequest, res: Response) => {
+router.get('/departments', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const db = getDatabase();
-    const rows = db.prepare(`
-      SELECT DISTINCT department 
-      FROM users 
-      WHERE department IS NOT NULL AND TRIM(department) != ''
-      ORDER BY department ASC
-    `).all() as Array<{ department: string }>;
-
-    const departments = rows.map((r) => r.department);
+    const departments = await reportService.getDepartments();
     return sendSuccess(res, { departments });
   } catch (error) {
     console.error('[ReportRoutes] /departments error:', error);
@@ -36,7 +27,7 @@ router.get('/departments', (req: AuthenticatedRequest, res: Response) => {
  * GET /api/admin/reports/attendance
  * Generates filtered attendance report with summary metrics and pagination
  */
-router.get('/attendance', (req: AuthenticatedRequest, res: Response) => {
+router.get('/attendance', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const actor = req.user!;
     const ipAddress = (req.ip || req.socket.remoteAddress || '127.0.0.1').replace('::ffff:', '');
@@ -70,7 +61,7 @@ router.get('/attendance', (req: AuthenticatedRequest, res: Response) => {
       order: typeof order === 'string' ? (order.toLowerCase() === 'asc' ? 'asc' : 'desc') : 'desc',
     };
 
-    const report = reportService.getAttendanceReport(actor, query, ipAddress, userAgent);
+    const report = await reportService.getAttendanceReport(actor, query, ipAddress, userAgent);
 
     if (!report.success || !report.data) {
       return sendError(
@@ -92,7 +83,7 @@ router.get('/attendance', (req: AuthenticatedRequest, res: Response) => {
  * GET /api/admin/reports/attendance/summary
  * Returns summary statistics for the filtered period
  */
-router.get(['/attendance/summary', '/summary'], (req: AuthenticatedRequest, res: Response) => {
+router.get(['/attendance/summary', '/summary'], async (req: AuthenticatedRequest, res: Response) => {
   try {
     const actor = req.user!;
     const ipAddress = (req.ip || req.socket.remoteAddress || '127.0.0.1').replace('::ffff:', '');
@@ -120,7 +111,7 @@ router.get(['/attendance/summary', '/summary'], (req: AuthenticatedRequest, res:
       limit: 1,
     };
 
-    const report = reportService.getAttendanceReport(actor, query, ipAddress, userAgent);
+    const report = await reportService.getAttendanceReport(actor, query, ipAddress, userAgent);
 
     if (!report.success || !report.data) {
       return sendError(
@@ -146,7 +137,7 @@ router.get(['/attendance/summary', '/summary'], (req: AuthenticatedRequest, res:
  * GET /api/admin/reports/export.csv
  * Exports filtered report dataset to CSV with formula injection protection
  */
-router.get(['/attendance/export.csv', '/export.csv', '/attendance/export/csv'], (req: AuthenticatedRequest, res: Response) => {
+router.get(['/attendance/export.csv', '/export.csv', '/attendance/export/csv'], async (req: AuthenticatedRequest, res: Response) => {
   try {
     const actor = req.user!;
     const ipAddress = (req.ip || req.socket.remoteAddress || '127.0.0.1').replace('::ffff:', '');
@@ -176,7 +167,7 @@ router.get(['/attendance/export.csv', '/export.csv', '/attendance/export/csv'], 
       order: typeof order === 'string' ? (order.toLowerCase() === 'asc' ? 'asc' : 'desc') : 'desc',
     };
 
-    const result = reportService.generateCsvExport(actor, query, ipAddress, userAgent);
+    const result = await reportService.generateCsvExport(actor, query, ipAddress, userAgent);
 
     if (!result.success || !result.csvContent) {
       return sendError(
@@ -208,7 +199,7 @@ router.get(['/attendance/export.csv', '/export.csv', '/attendance/export/csv'], 
  */
 router.get(
   ['/attendance/export.xlsx', '/export.xlsx', '/attendance/export.xls', '/export.xls', '/attendance/export/excel'],
-  (req: AuthenticatedRequest, res: Response) => {
+  async (req: AuthenticatedRequest, res: Response) => {
     try {
       const actor = req.user!;
       const ipAddress = (req.ip || req.socket.remoteAddress || '127.0.0.1').replace('::ffff:', '');
@@ -238,7 +229,7 @@ router.get(
         order: typeof order === 'string' ? (order.toLowerCase() === 'asc' ? 'asc' : 'desc') : 'desc',
       };
 
-      const result = reportService.generateExcelExport(actor, query, ipAddress, userAgent);
+      const result = await reportService.generateExcelExport(actor, query, ipAddress, userAgent);
 
       if (!result.success || !result.excelContent) {
         return sendError(

@@ -1,4 +1,4 @@
-import { getDatabase } from '../db/index.ts';
+import { dbAdapter } from '../db/adapter.ts';
 import { auditService } from './audit.service.ts';
 import { maskIpAddress } from './network.service.ts';
 import {
@@ -158,34 +158,50 @@ export class ReportService {
   }
 
   /**
-   * Builds the core WHERE clause and parameters for report queries
+   * Retrieves distinct departments for populating dropdown filters
+   */
+  public async getDepartments(): Promise<string[]> {
+    const rows = await dbAdapter.query<{ department: string }>(`
+      SELECT DISTINCT department 
+      FROM users 
+      WHERE department IS NOT NULL AND TRIM(department) != ''
+      ORDER BY department ASC
+    `);
+    return rows.map((r) => r.department);
+  }
+
+  /**
+   * Builds the core WHERE clause and parameters for report queries using $1, $2 positional placeholders
    */
   private buildQueryFilter(
     startDate: string,
     endDate: string,
-    query: AttendanceReportQuery
+    query: AttendanceReportQuery,
+    startParamIndex = 1
   ): {
     whereClause: string;
     params: (string | number)[];
+    nextParamIndex: number;
   } {
-    let whereClause = ` WHERE a.date >= ? AND a.date <= ?`;
+    let idx = startParamIndex;
+    let whereClause = ` WHERE a.date >= $${idx++} AND a.date <= $${idx++}`;
     const params: (string | number)[] = [startDate, endDate];
 
     // Staff filter
     if (query.staffId && query.staffId !== 'all' && query.staffId.trim()) {
-      whereClause += ` AND u.id = ?`;
+      whereClause += ` AND u.id = $${idx++}`;
       params.push(query.staffId.trim());
     }
 
     // Department filter
     if (query.department && query.department !== 'all' && query.department.trim()) {
-      whereClause += ` AND u.department = ?`;
+      whereClause += ` AND u.department = $${idx++}`;
       params.push(query.department.trim());
     }
 
     // Account status filter
     if (query.accountStatus && query.accountStatus !== 'ALL') {
-      whereClause += ` AND u.status = ?`;
+      whereClause += ` AND u.status = $${idx++}`;
       params.push(query.accountStatus);
     }
 
@@ -199,16 +215,17 @@ export class ReportService {
       } else if (status === 'PRESENT') {
         whereClause += ` AND a.check_in IS NOT NULL`;
       } else {
-        whereClause += ` AND a.status = ?`;
+        whereClause += ` AND a.status = $${idx++}`;
         params.push(query.attendanceStatus);
       }
     }
 
-    return { whereClause, params };
+    return { whereClause, params, nextParamIndex: idx };
   }
 
   /**
-   * Safely maps user sort input to verified SQL ORDER BY clause
+   * Safely maps user sort input to verified SQL ORDER BY clause.
+   * Uses portable epoch extraction compatible with both SQLite and PostgreSQL.
    */
   private getOrderByClause(sort?: string, order?: string): string {
     const isAsc = String(order).toLowerCase() === 'asc';
@@ -225,8 +242,12 @@ export class ReportService {
         return ` ORDER BY a.check_in ${direction} NULLS LAST`;
       case 'checkOut':
         return ` ORDER BY a.check_out ${direction} NULLS LAST`;
-      case 'workingDuration':
-        return ` ORDER BY (CASE WHEN a.check_out IS NOT NULL AND a.check_in IS NOT NULL THEN (strftime('%s', a.check_out) - strftime('%s', a.check_in)) ELSE 0 END) ${direction}`;
+      case 'workingDuration': {
+        const durationExpr = dbAdapter.isPostgres()
+          ? `(EXTRACT(EPOCH FROM a.check_out) - EXTRACT(EPOCH FROM a.check_in))`
+          : `(strftime('%s', a.check_out) - strftime('%s', a.check_in))`;
+        return ` ORDER BY (CASE WHEN a.check_out IS NOT NULL AND a.check_in IS NOT NULL THEN ${durationExpr} ELSE 0 END) ${direction}`;
+      }
       case 'status':
         return ` ORDER BY a.status ${direction}`;
       default:
@@ -237,19 +258,17 @@ export class ReportService {
   /**
    * Generates a paginated attendance report with comprehensive summary statistics
    */
-  public getAttendanceReport(
+  public async getAttendanceReport(
     actor: SafeUser,
     query: AttendanceReportQuery,
     ipAddress?: string,
     userAgent?: string
-  ): {
+  ): Promise<{
     success: boolean;
     data?: AttendanceReportResponse;
     errorCode?: ApiErrorCode;
     errorMessage?: string;
-  } {
-    const db = getDatabase();
-
+  }> {
     // 1. Resolve date range
     const dateRange = this.resolveDateRange(query);
     if (!dateRange.valid) {
@@ -264,7 +283,7 @@ export class ReportService {
     const daysInPeriod = getDaysBetweenDates(startDate, endDate);
 
     // 2. Build filtered SQL
-    const { whereClause, params } = this.buildQueryFilter(startDate, endDate, query);
+    const { whereClause, params, nextParamIndex } = this.buildQueryFilter(startDate, endDate, query);
 
     // 3. Count total matching rows for pagination
     const countSql = `
@@ -273,24 +292,25 @@ export class ReportService {
       JOIN users u ON a.staff_id = u.id
       ${whereClause}
     `;
-    const totalRow = db.prepare(countSql).get(...params) as { total: number } | undefined;
-    const totalRecords = totalRow?.total || 0;
+    const totalRow = await dbAdapter.queryOne<{ total: number | string }>(countSql, params);
+    const totalRecords = Number(totalRow?.total || 0);
 
     // 4. Calculate Summary Aggregations
     // Total staff in scope
+    let staffIdx = 1;
     let staffCountSql = `SELECT COUNT(*) AS total_staff, SUM(CASE WHEN status = 'ACTIVE' THEN 1 ELSE 0 END) AS active_staff FROM users WHERE role != 'SUPER_ADMIN'`;
     const staffCountParams: (string | number)[] = [];
     if (query.department && query.department !== 'all' && query.department.trim()) {
-      staffCountSql += ` AND department = ?`;
+      staffCountSql += ` AND department = $${staffIdx++}`;
       staffCountParams.push(query.department.trim());
     }
     if (query.staffId && query.staffId !== 'all' && query.staffId.trim()) {
-      staffCountSql += ` AND id = ?`;
+      staffCountSql += ` AND id = $${staffIdx++}`;
       staffCountParams.push(query.staffId.trim());
     }
-    const staffCountRow = db.prepare(staffCountSql).get(...staffCountParams) as { total_staff: number; active_staff: number } | undefined;
-    const totalStaffInScope = staffCountRow?.total_staff || 0;
-    const totalActiveStaff = staffCountRow?.active_staff || 0;
+    const staffCountRow = await dbAdapter.queryOne<{ total_staff: number | string; active_staff: number | string }>(staffCountSql, staffCountParams);
+    const totalStaffInScope = Number(staffCountRow?.total_staff || 0);
+    const totalActiveStaff = Number(staffCountRow?.active_staff || 0);
 
     // Fetch all matching rows in period (without pagination limit) to compute exact working seconds and completed shift metrics
     const aggSql = `
@@ -300,12 +320,12 @@ export class ReportService {
       JOIN users u ON a.staff_id = u.id
       ${whereClause}
     `;
-    const allMatchingRows = db.prepare(aggSql).all(...params) as Array<{
+    const allMatchingRows = await dbAdapter.query<{
       id: string;
       check_in: string | null;
       check_out: string | null;
       staff_id: string;
-    }>;
+    }>(aggSql, params);
 
     let completedShifts = 0;
     let incompleteShifts = 0;
@@ -377,6 +397,10 @@ export class ReportService {
 
     const orderBy = this.getOrderByClause(query.sort, query.order);
 
+    let dataIdx = nextParamIndex;
+    const limitParam = `$${dataIdx++}`;
+    const offsetParam = `$${dataIdx++}`;
+
     const dataSql = `
       SELECT 
         a.id,
@@ -398,11 +422,11 @@ export class ReportService {
       JOIN users u ON a.staff_id = u.id
       ${whereClause}
       ${orderBy}
-      LIMIT ? OFFSET ?
+      LIMIT ${limitParam} OFFSET ${offsetParam}
     `;
 
     const dataParams = [...params, limit, offset];
-    const rows = (db.prepare(dataSql).all(...dataParams) as unknown) as RawReportDbRow[];
+    const rows = await dbAdapter.query<RawReportDbRow>(dataSql, dataParams);
 
     const records: AttendanceReportRow[] = rows.map((r) => {
       const duration = calculateWorkingDuration(r.check_in, r.check_out);
@@ -428,7 +452,7 @@ export class ReportService {
     });
 
     // 6. Record Audit Log for Report Generation
-    auditService.log({
+    await auditService.log({
       actorId: actor.id,
       action: 'ATTENDANCE_REPORT_GENERATED',
       ipAddress,
@@ -472,10 +496,10 @@ export class ReportService {
   /**
    * Retrieves all matching report rows for export (up to maximum safety export limit)
    */
-  public getAllMatchingReportRows(
+  public async getAllMatchingReportRows(
     query: AttendanceReportQuery,
     maxExportLimit = 10000
-  ): {
+  ): Promise<{
     success: boolean;
     startDate?: string;
     endDate?: string;
@@ -483,9 +507,7 @@ export class ReportService {
     summary?: AttendanceReportSummary;
     errorCode?: ApiErrorCode;
     errorMessage?: string;
-  } {
-    const db = getDatabase();
-
+  }> {
     const dateRange = this.resolveDateRange(query);
     if (!dateRange.valid) {
       return {
@@ -496,9 +518,10 @@ export class ReportService {
     }
 
     const { startDate, endDate } = dateRange;
-    const { whereClause, params } = this.buildQueryFilter(startDate, endDate, query);
+    const { whereClause, params, nextParamIndex } = this.buildQueryFilter(startDate, endDate, query);
     const orderBy = this.getOrderByClause(query.sort, query.order);
 
+    const limitParam = `$${nextParamIndex}`;
     const exportSql = `
       SELECT 
         a.id,
@@ -520,10 +543,10 @@ export class ReportService {
       JOIN users u ON a.staff_id = u.id
       ${whereClause}
       ${orderBy}
-      LIMIT ?
+      LIMIT ${limitParam}
     `;
 
-    const rows = (db.prepare(exportSql).all(...params, maxExportLimit) as unknown) as RawReportDbRow[];
+    const rows = await dbAdapter.query<RawReportDbRow>(exportSql, [...params, maxExportLimit]);
 
     const records: AttendanceReportRow[] = rows.map((r) => {
       const duration = calculateWorkingDuration(r.check_in, r.check_out);
@@ -559,20 +582,20 @@ export class ReportService {
   /**
    * Generates sanitized CSV export content
    */
-  public generateCsvExport(
+  public async generateCsvExport(
     actor: SafeUser,
     query: AttendanceReportQuery,
     ipAddress?: string,
     userAgent?: string
-  ): {
+  ): Promise<{
     success: boolean;
     csvContent?: string;
     filename?: string;
     recordCount?: number;
     errorCode?: ApiErrorCode;
     errorMessage?: string;
-  } {
-    const result = this.getAllMatchingReportRows(query);
+  }> {
+    const result = await this.getAllMatchingReportRows(query);
     if (!result.success || !result.records) {
       return {
         success: false,
@@ -620,7 +643,7 @@ export class ReportService {
     const filename = `attendance-report-${startDate}-to-${endDate}.csv`;
 
     // Audit log for export
-    auditService.log({
+    await auditService.log({
       actorId: actor.id,
       action: 'ATTENDANCE_REPORT_EXPORTED',
       ipAddress,
@@ -646,20 +669,20 @@ export class ReportService {
   /**
    * Generates sanitized XML Spreadsheet 2003 (.xls/.xlsx compatible) export content
    */
-  public generateExcelExport(
+  public async generateExcelExport(
     actor: SafeUser,
     query: AttendanceReportQuery,
     ipAddress?: string,
     userAgent?: string
-  ): {
+  ): Promise<{
     success: boolean;
     excelContent?: string;
     filename?: string;
     recordCount?: number;
     errorCode?: ApiErrorCode;
     errorMessage?: string;
-  } {
-    const result = this.getAllMatchingReportRows(query);
+  }> {
+    const result = await this.getAllMatchingReportRows(query);
     if (!result.success || !result.records) {
       return {
         success: false,
@@ -785,7 +808,7 @@ ${dataRowsXml}
     const filename = `attendance-report-${startDate}-to-${endDate}.xls`;
 
     // Audit log for export
-    auditService.log({
+    await auditService.log({
       actorId: actor.id,
       action: 'ATTENDANCE_REPORT_EXPORTED',
       ipAddress,
