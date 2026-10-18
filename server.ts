@@ -2,8 +2,9 @@ import express, { Request, Response, NextFunction } from 'express';
 import cookieParser from 'cookie-parser';
 import path from 'node:path';
 import dotenv from 'dotenv';
-import { getDatabase, closeDatabase, closePostgresPool } from './server/db/index.ts';
+import { getDatabase, closeDatabase, closePostgresPool, initializePostgresStartup } from './server/db/index.ts';
 import { seedDatabase } from './server/db/seed.ts';
+import { refreshOfficeIpsCache } from './server/services/network.service.ts';
 import { securityHeaders } from './server/middleware/security.ts';
 import authRoutes from './server/routes/auth.routes.ts';
 import devRoutes from './server/routes/dev.routes.ts';
@@ -32,7 +33,7 @@ async function startServer() {
   app.use(express.urlencoded({ extended: true }));
 
   // Database initialization:
-  // In production, strictly verify DATABASE_URL is present and fail closed if missing.
+  // In production, strictly verify DATABASE_URL is present, run sequential PostgreSQL initialization, and fail closed if any step fails.
   if (process.env.NODE_ENV === 'production') {
     if (!process.env.DATABASE_URL) {
       console.error(
@@ -42,12 +43,23 @@ async function startServer() {
       process.exit(1);
     }
     console.log('[Database] Production mode active: Managed PostgreSQL configured via DATABASE_URL.');
+
+    try {
+      await initializePostgresStartup();
+    } catch (startupError: any) {
+      console.error(
+        '[FATAL PRODUCTION ERROR] PostgreSQL startup initialization failed:',
+        startupError?.message || startupError
+      );
+      process.exit(1);
+    }
   } else {
-    // Non-production / Local development: Initialize SQLite database and run seed
+    // Non-production / Local development: Initialize SQLite database, run seed, and refresh office IP cache
     try {
       getDatabase();
       await seedDatabase();
-      console.log('[Database] Local SQLite initialized and verified successfully.');
+      await refreshOfficeIpsCache();
+      console.log('[Database] Local SQLite initialized and office IP cache refreshed successfully.');
     } catch (dbError) {
       console.error('[Database] Local SQLite initialization error:', dbError);
     }

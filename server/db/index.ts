@@ -110,3 +110,7 @@ export {
   resolvePostgresConfig,
 } from './postgres.ts';
 
+// Re-export PostgreSQL startup initialization
+export { initializePostgresStartup } from './init.postgres.ts';
+
+

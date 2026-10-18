@@ -1,5 +1,6 @@
 import pg from 'pg';
 import type { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
+import { parse as parseConnectionString } from 'pg-connection-string';
 
 const { Pool: PgPool, types } = pg;
 
@@ -63,11 +64,78 @@ export function resolvePostgresConfig(): PostgresPoolConfig {
   const idleTimeoutMillis = parseInt(process.env.DB_IDLE_TIMEOUT_MS || '30000', 10);
   const connectionTimeoutMillis = parseInt(process.env.DB_CONNECT_TIMEOUT_MS || '5000', 10);
 
-  // SSL handling: Enable SSL for Cloud Run / Cloud SQL production connections
+  // Parse connection string to accurately identify target transport (Unix domain socket vs TCP)
+  let parsedHost: string | null = null;
+  let parsedSslMode: string | undefined;
+  if (connectionString) {
+    try {
+      const parsed = parseConnectionString(connectionString);
+      parsedHost = parsed.host || null;
+      if (typeof parsed.sslmode === 'string') {
+        parsedSslMode = parsed.sslmode.toLowerCase();
+      }
+    } catch {
+      // Fall back to string analysis if URL parsing fails
+    }
+  }
+
+  // Identify Unix-domain socket connection targets (e.g. Cloud SQL Auth Proxy at /cloudsql/...)
+  const isUnixSocket = Boolean(
+    (parsedHost && parsedHost.startsWith('/')) ||
+    connectionString.includes('host=/') ||
+    connectionString.includes('%2Fcloudsql%2F') ||
+    connectionString.includes('/cloudsql/')
+  );
+
+  const sslRequested = Boolean(
+    parsedSslMode === 'require' ||
+    parsedSslMode === 'verify-ca' ||
+    parsedSslMode === 'verify-full' ||
+    connectionString.includes('sslmode=require') ||
+    connectionString.includes('sslmode=verify-ca') ||
+    connectionString.includes('sslmode=verify-full')
+  );
+
+  const sslExplicitlyDisabled = Boolean(
+    parsedSslMode === 'disable' ||
+    connectionString.includes('sslmode=disable')
+  );
+
+  // SSL handling: Connection-specific TLS configuration
   let ssl: { rejectUnauthorized: boolean } | boolean | undefined;
-  if (isProd || connectionString.includes('sslmode=require')) {
-    const rejectUnauthorized = process.env.DB_SSL_REJECT_UNAUTHORIZED === 'true';
-    ssl = { rejectUnauthorized };
+
+  if (isUnixSocket) {
+    // Unix-domain socket connection: Local IPC (proxy handles outbound mTLS to Cloud SQL).
+    // Client-side TLS must NOT be configured over local Unix sockets.
+    if (sslRequested) {
+      throw new Error(
+        `Contradictory database configuration: SSL/TLS is requested (sslmode=require), but the connection target is a Unix-domain socket (${parsedHost || 'path'}). Unix sockets do not support client-side TLS.`
+      );
+    }
+    ssl = undefined;
+  } else {
+    // Direct TCP connection
+    if (isProd) {
+      if (sslExplicitlyDisabled) {
+        throw new Error(
+          'Insecure database configuration: sslmode=disable is prohibited in production mode for TCP connections.'
+        );
+      }
+      // In production over TCP, SSL is mandatory.
+      // Certificate verification defaults to true to prevent MITM attacks.
+      // An operator can explicitly opt out only by setting DB_SSL_REJECT_UNAUTHORIZED='false'.
+      const rejectUnauthorized = process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false';
+      if (!rejectUnauthorized) {
+        console.warn(
+          '[SECURITY WARNING] PostgreSQL server certificate verification is explicitly disabled via DB_SSL_REJECT_UNAUTHORIZED=false.'
+        );
+      }
+      ssl = { rejectUnauthorized };
+    } else if (sslRequested) {
+      // Non-production environment with explicit SSL requested
+      const rejectUnauthorized = process.env.DB_SSL_REJECT_UNAUTHORIZED === 'true';
+      ssl = { rejectUnauthorized };
+    }
   }
 
   return {

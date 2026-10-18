@@ -113,6 +113,13 @@ export function extractClientIp(req: Request): {
 let cachedDbOfficeIps: string[] | null = null;
 
 /**
+ * For testing purposes: allows resetting or mocking the in-memory office IP cache.
+ */
+export function setCachedOfficeIpsForTesting(ips: string[] | null): void {
+  cachedDbOfficeIps = ips;
+}
+
+/**
  * Parses raw JSON string or comma-separated string of office IPs into normalized array
  */
 function parseOfficeIpsSetting(rawValue?: string | null): string[] {
@@ -140,9 +147,10 @@ function parseOfficeIpsSetting(rawValue?: string | null): string[] {
 }
 
 /**
- * Asynchronously refreshes the in-memory cache of approved office IPs from database
+ * Asynchronously refreshes the in-memory cache of approved office IPs from database.
+ * Supports throwOnError option for fail-closed startup validation.
  */
-export async function refreshOfficeIpsCache(): Promise<string[]> {
+export async function refreshOfficeIpsCache(options: { throwOnError?: boolean } = {}): Promise<string[]> {
   try {
     const row = await dbAdapter.queryOne<{ value: string }>(
       'SELECT value FROM system_settings WHERE key = $1',
@@ -152,6 +160,9 @@ export async function refreshOfficeIpsCache(): Promise<string[]> {
     return cachedDbOfficeIps;
   } catch (err) {
     console.error('[NetworkService] Error refreshing office IPs from database:', err);
+    if (options.throwOnError) {
+      throw err;
+    }
     return cachedDbOfficeIps || [];
   }
 }
