@@ -1,6 +1,5 @@
 import crypto from 'node:crypto';
 import { dbAdapter, type DbAdapter } from '../db/adapter.ts';
-import { getDatabase } from '../db/index.ts';
 import { generateId } from '../utils/crypto.ts';
 import { auditService } from './audit.service.ts';
 import {

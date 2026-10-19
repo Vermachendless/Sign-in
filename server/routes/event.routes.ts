@@ -350,7 +350,7 @@ router.post('/:id/access-passes', requireAdmin, async (req: AuthenticatedRequest
  * GET /api/events/:id/access-passes
  * Lists all generated access passes for an event (ADMIN and SUPER_ADMIN only)
  */
-router.get('/:id/access-passes', requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.get('/:id/access-passes', requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const actor = req.user!;
     const { id } = req.params;
@@ -359,7 +359,7 @@ router.get('/:id/access-passes', requireAdmin, (req: AuthenticatedRequest, res: 
       return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, 'Event ID parameter is required.');
     }
 
-    const result = accessService.listEventAccessPasses(id, actor);
+    const result = await accessService.listEventAccessPasses(id, actor);
     return sendSuccess(res, result);
   } catch (error) {
     console.error('[EventRoutes] listEventAccessPasses error:', error);
