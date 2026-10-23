@@ -1,6 +1,7 @@
 import { dbAdapter } from '../db/adapter.ts';
 import { generateId } from '../utils/crypto.ts';
 import { auditService } from './audit.service.ts';
+import { notificationService } from './notification.service.ts';
 import {
   EventRecord,
   EventStatus,
@@ -8,6 +9,7 @@ import {
   UpdateEventInput,
   SafeUser,
   UserRole,
+  NotificationType,
 } from '../../src/types/index.ts';
 import { COMPANY_TIMEZONE, formatDateInTimezone, formatTimeInTimezone } from '../utils/time.ts';
 
@@ -574,7 +576,8 @@ export class EventService {
       id: string;
       title: string;
       status: EventStatus;
-    }>('SELECT id, title, status FROM events WHERE id = $1', [eventId]);
+      created_by: string;
+    }>('SELECT id, title, status, created_by FROM events WHERE id = $1', [eventId]);
 
     if (!existing) {
       return { success: false, error: 'Event not found.' };
@@ -612,6 +615,27 @@ export class EventService {
       },
     });
 
+    // Workflow notification: Notify event creator of approval
+    if (existing.created_by) {
+      try {
+        await notificationService.createNotification({
+          userId: existing.created_by,
+          type: NotificationType.EVENT_APPROVED,
+          title: `Event Approved: ${existing.title}`,
+          message: `Your event "${existing.title}" has been approved by ${actor.firstName} ${actor.lastName}.`,
+          metadata: {
+            eventId,
+            title: existing.title,
+            approvedBy: actor.id,
+            approvedByName: `${actor.firstName} ${actor.lastName}`,
+            approvedAt: now,
+          },
+        });
+      } catch (notifErr) {
+        console.error('[EventService] Failed to deliver event approval notification:', notifErr);
+      }
+    }
+
     const updated = await this.getEventById(eventId, actor);
     return { success: true, event: updated || undefined };
   }
@@ -642,7 +666,8 @@ export class EventService {
       id: string;
       title: string;
       status: EventStatus;
-    }>('SELECT id, title, status FROM events WHERE id = $1', [eventId]);
+      created_by: string;
+    }>('SELECT id, title, status, created_by FROM events WHERE id = $1', [eventId]);
 
     if (!existing) {
       return { success: false, error: 'Event not found.' };
@@ -680,6 +705,28 @@ export class EventService {
         rejectionReason: trimmedReason,
       },
     });
+
+    // Workflow notification: Notify event creator of rejection
+    if (existing.created_by) {
+      try {
+        await notificationService.createNotification({
+          userId: existing.created_by,
+          type: NotificationType.EVENT_REJECTED,
+          title: `Event Rejected: ${existing.title}`,
+          message: `Your event "${existing.title}" was rejected. Reason: ${trimmedReason}`,
+          metadata: {
+            eventId,
+            title: existing.title,
+            rejectedBy: actor.id,
+            rejectedByName: `${actor.firstName} ${actor.lastName}`,
+            rejectedAt: now,
+            rejectionReason: trimmedReason,
+          },
+        });
+      } catch (notifErr) {
+        console.error('[EventService] Failed to deliver event rejection notification:', notifErr);
+      }
+    }
 
     const updated = await this.getEventById(eventId, actor);
     return { success: true, event: updated || undefined };

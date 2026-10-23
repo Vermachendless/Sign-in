@@ -14,6 +14,7 @@ import eventRoutes from './server/routes/event.routes.ts';
 import accessRoutes from './server/routes/access.routes.ts';
 import visitorRoutes from './server/routes/visitor.routes.ts';
 import receptionRoutes from './server/routes/reception.routes.ts';
+import notificationRoutes from './server/routes/notification.routes.ts';
 
 dotenv.config();
 
@@ -99,13 +100,25 @@ async function startServer() {
   // Reception Access Verification & Check-In / Check-Out API routes (Phase 6F)
   app.use('/api/reception', receptionRoutes);
 
+  // Notification Centre API routes (Phase 3A)
+  app.use('/api/notifications', notificationRoutes);
+
   // Global API error handler
-  app.use('/api/*', (err: Error, req: Request, res: Response, _next: NextFunction) => {
+  app.use(['/api', '/api/*'], (err: Error, req: Request, res: Response, _next: NextFunction) => {
     console.error('[API Error Handler]:', err);
     res.status(500).json({
       success: false,
       code: 'INTERNAL_ERROR',
       message: 'An internal server error occurred.',
+    });
+  });
+
+  // JSON 404 handler for unmatched API endpoints (including /api itself and nested /api/... paths)
+  app.use('/api', (_req: Request, res: Response) => {
+    res.status(404).json({
+      success: false,
+      code: 'NOT_FOUND',
+      message: 'API endpoint not found',
     });
   });
 

@@ -578,3 +578,46 @@ export interface VisitorVisitsSummary {
   cancelled: number;
 }
 
+// ============================================================================
+// Notification Centre Types (Phase 3A)
+// ============================================================================
+
+export enum NotificationType {
+  VISITOR_CHECKED_IN = 'VISITOR_CHECKED_IN',
+  EVENT_APPROVED = 'EVENT_APPROVED',
+  EVENT_REJECTED = 'EVENT_REJECTED',
+  EVENT_SUBMITTED = 'EVENT_SUBMITTED',
+  ATTENDANCE_OVERRIDE = 'ATTENDANCE_OVERRIDE',
+  SYSTEM = 'SYSTEM',
+}
+
+export interface NotificationRecord {
+  id: string;
+  userId: string;
+  type: NotificationType | string;
+  title: string;
+  message: string;
+  metadata?: Record<string, any> | null;
+  isRead: boolean;
+  readAt?: string | null;
+  createdAt: string;
+}
+
+export interface CreateNotificationInput {
+  userId: string;
+  type: NotificationType | string;
+  title: string;
+  message: string;
+  metadata?: Record<string, any> | null;
+}
+
+export interface NotificationListResponse {
+  notifications: NotificationRecord[];
+  total: number;
+  unreadCount: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+  hasMore: boolean;
+}
+

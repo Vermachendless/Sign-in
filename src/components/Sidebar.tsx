@@ -335,8 +335,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <aside
         id="app-global-sidebar"
         className={`fixed top-0 bottom-0 left-0 z-50 flex flex-col bg-brand-black text-white border-r border-neutral-800 transition-all duration-300 ease-in-out select-none
-          ${isMobileOpen ? 'translate-x-0 w-72' : '-translate-x-full lg:translate-x-0'}
-          ${isCollapsed ? 'lg:w-20' : 'lg:w-64'}
+          ${isMobileOpen ? 'translate-x-0 w-72 max-w-[calc(100vw-3rem)]' : '-translate-x-full lg:translate-x-0'}
+          ${isCollapsed ? 'lg:w-20 lg:max-w-none' : 'lg:w-64 lg:max-w-none'}
         `}
       >
         {/* Brand Header */}
@@ -573,11 +573,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* User Profile Modal */}
       {showProfileModal && (
         <div
-          className="fixed inset-0 bg-black/60 backdrop-blur-xs z-70 flex items-center justify-center p-4"
+          className="fixed inset-0 bg-black/60 backdrop-blur-xs z-70 flex items-center justify-center p-3 sm:p-4"
           onClick={() => setShowProfileModal(false)}
         >
           <div
-            className="bg-white rounded-2xl border border-brand-border p-6 max-w-md w-full shadow-2xl text-brand-black"
+            className="bg-white rounded-2xl border border-brand-border p-5 sm:p-6 max-w-md w-full shadow-2xl text-brand-black max-h-[calc(100vh-2rem)] max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between pb-4 border-b border-brand-border mb-4">

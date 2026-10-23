@@ -461,18 +461,25 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ onStaffUpdated
 
       {/* CREATE STAFF MODAL */}
       {isCreateOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-brand-black/60 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl border border-brand-border shadow-xl max-w-lg w-full p-6 relative animate-in fade-in zoom-in-95">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-brand-black/60 backdrop-blur-xs"
+          onClick={() => setIsCreateOpen(false)}
+        >
+          <div
+            className="bg-white rounded-2xl border border-brand-border shadow-xl max-w-lg w-full p-5 sm:p-6 relative animate-in fade-in zoom-in-95 max-h-[calc(100vh-2rem)] max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain"
+            onClick={(e) => e.stopPropagation()}
+          >
             <button
               onClick={() => setIsCreateOpen(false)}
-              className="absolute top-4 right-4 text-brand-muted hover:text-brand-black p-1.5 rounded-lg hover:bg-neutral-100 cursor-pointer"
+              className="absolute top-4 right-4 text-brand-muted hover:text-brand-black p-1.5 rounded-lg hover:bg-neutral-100 cursor-pointer z-10"
+              aria-label="Close dialog"
             >
               <X className="w-5 h-5" />
             </button>
 
-            <h3 className="text-lg font-bold text-brand-black flex items-center gap-2">
-              <UserPlus className="w-5 h-5 text-brand-yellow" />
-              Add New Staff Account
+            <h3 className="text-lg font-bold text-brand-black flex items-center gap-2 pr-8">
+              <UserPlus className="w-5 h-5 text-brand-yellow shrink-0" />
+              <span>Add New Staff Account</span>
             </h3>
             <p className="text-xs text-brand-muted mt-1 mb-4">
               Create an authenticated staff account. Passwords are securely hashed on the server.
@@ -481,12 +488,12 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ onStaffUpdated
             {createError && (
               <div className="mb-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 shrink-0" />
-                {createError}
+                <span>{createError}</span>
               </div>
             )}
 
             <form onSubmit={handleCreateSubmit} className="space-y-4 text-sm">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-brand-black mb-1">First Name *</label>
                   <input
@@ -539,7 +546,7 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ onStaffUpdated
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-brand-black mb-1">Department</label>
                   <input
@@ -571,7 +578,7 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ onStaffUpdated
                     id="create-role"
                     value={createForm.role}
                     onChange={(e) => setCreateForm({ ...createForm, role: e.target.value as UserRole })}
-                    className="w-full px-3 py-2 border border-brand-border rounded-xl focus:ring-2 focus:ring-brand-yellow focus:border-brand-yellow focus:outline-none"
+                    className="w-full px-3 py-2 border border-brand-border rounded-xl focus:ring-2 focus:ring-brand-yellow focus:border-brand-yellow focus:outline-none bg-white"
                   >
                     <option value={UserRole.STAFF}>STAFF</option>
                     <option value={UserRole.ADMIN}>ADMIN</option>
@@ -579,11 +586,11 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ onStaffUpdated
                 </div>
               )}
 
-              <div className="flex justify-end gap-3 pt-4 border-t border-brand-border">
+              <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 sm:gap-3 pt-4 border-t border-brand-border">
                 <button
                   type="button"
                   onClick={() => setIsCreateOpen(false)}
-                  className="px-4 py-2 rounded-xl text-brand-black hover:bg-neutral-100 font-semibold transition cursor-pointer"
+                  className="w-full sm:w-auto px-4 py-2 rounded-xl text-brand-black hover:bg-neutral-100 font-semibold transition cursor-pointer text-center"
                 >
                   Cancel
                 </button>
@@ -591,7 +598,7 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ onStaffUpdated
                   id="create-submit-btn"
                   type="submit"
                   disabled={createSubmitting}
-                  className="px-4 py-2 rounded-xl bg-brand-yellow hover:bg-brand-yellow-hover text-brand-black font-bold shadow-xs transition disabled:opacity-50 cursor-pointer"
+                  className="w-full sm:w-auto px-4 py-2 rounded-xl bg-brand-yellow hover:bg-brand-yellow-hover text-brand-black font-bold shadow-xs transition disabled:opacity-50 cursor-pointer text-center"
                 >
                   {createSubmitting ? 'Creating Account...' : 'Create Account'}
                 </button>
@@ -603,18 +610,25 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ onStaffUpdated
 
       {/* EDIT STAFF MODAL */}
       {editingStaff && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-brand-black/60 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl border border-brand-border shadow-xl max-w-lg w-full p-6 relative animate-in fade-in zoom-in-95">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-brand-black/60 backdrop-blur-xs"
+          onClick={() => setEditingStaff(null)}
+        >
+          <div
+            className="bg-white rounded-2xl border border-brand-border shadow-xl max-w-lg w-full p-5 sm:p-6 relative animate-in fade-in zoom-in-95 max-h-[calc(100vh-2rem)] max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain"
+            onClick={(e) => e.stopPropagation()}
+          >
             <button
               onClick={() => setEditingStaff(null)}
-              className="absolute top-4 right-4 text-brand-muted hover:text-brand-black p-1.5 rounded-lg hover:bg-neutral-100 cursor-pointer"
+              className="absolute top-4 right-4 text-brand-muted hover:text-brand-black p-1.5 rounded-lg hover:bg-neutral-100 cursor-pointer z-10"
+              aria-label="Close dialog"
             >
               <X className="w-5 h-5" />
             </button>
 
-            <h3 className="text-lg font-bold text-brand-black flex items-center gap-2">
-              <Edit2 className="w-5 h-5 text-brand-black" />
-              Edit Staff Profile
+            <h3 className="text-lg font-bold text-brand-black flex items-center gap-2 pr-8">
+              <Edit2 className="w-5 h-5 text-brand-black shrink-0" />
+              <span>Edit Staff Profile</span>
             </h3>
             <p className="text-xs text-brand-muted mt-1 mb-4">
               Modify details for {editingStaff.firstName} {editingStaff.lastName}.
@@ -623,12 +637,12 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ onStaffUpdated
             {editError && (
               <div className="mb-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 shrink-0" />
-                {editError}
+                <span>{editError}</span>
               </div>
             )}
 
             <form onSubmit={handleEditSubmit} className="space-y-4 text-sm">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-brand-black mb-1">First Name *</label>
                   <input
@@ -665,7 +679,7 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ onStaffUpdated
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-brand-black mb-1">Department</label>
                   <input
@@ -697,7 +711,7 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ onStaffUpdated
                     id="edit-role"
                     value={editForm.role}
                     onChange={(e) => setEditForm({ ...editForm, role: e.target.value as UserRole })}
-                    className="w-full px-3 py-2 border border-brand-border rounded-xl focus:ring-2 focus:ring-brand-yellow focus:border-brand-yellow focus:outline-none"
+                    className="w-full px-3 py-2 border border-brand-border rounded-xl focus:ring-2 focus:ring-brand-yellow focus:border-brand-yellow focus:outline-none bg-white"
                   >
                     <option value={UserRole.STAFF}>STAFF</option>
                     <option value={UserRole.ADMIN}>ADMIN</option>
@@ -705,11 +719,11 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ onStaffUpdated
                 </div>
               )}
 
-              <div className="flex justify-end gap-3 pt-4 border-t border-brand-border">
+              <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 sm:gap-3 pt-4 border-t border-brand-border">
                 <button
                   type="button"
                   onClick={() => setEditingStaff(null)}
-                  className="px-4 py-2 rounded-xl text-brand-black hover:bg-neutral-100 font-semibold transition cursor-pointer"
+                  className="w-full sm:w-auto px-4 py-2 rounded-xl text-brand-black hover:bg-neutral-100 font-semibold transition cursor-pointer text-center"
                 >
                   Cancel
                 </button>
@@ -717,7 +731,7 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ onStaffUpdated
                   id="edit-submit-btn"
                   type="submit"
                   disabled={editSubmitting}
-                  className="px-4 py-2 rounded-xl bg-brand-yellow hover:bg-brand-yellow-hover text-brand-black font-bold shadow-xs transition disabled:opacity-50 cursor-pointer"
+                  className="w-full sm:w-auto px-4 py-2 rounded-xl bg-brand-yellow hover:bg-brand-yellow-hover text-brand-black font-bold shadow-xs transition disabled:opacity-50 cursor-pointer text-center"
                 >
                   {editSubmitting ? 'Saving Changes...' : 'Save Changes'}
                 </button>
@@ -729,11 +743,18 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ onStaffUpdated
 
       {/* STAFF DETAIL / HISTORY MODAL */}
       {viewingStaffId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-brand-black/60 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl border border-brand-border shadow-xl max-w-2xl w-full p-6 relative animate-in fade-in zoom-in-95 max-h-[90vh] overflow-y-auto">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-brand-black/60 backdrop-blur-xs"
+          onClick={() => setViewingStaffId(null)}
+        >
+          <div
+            className="bg-white rounded-2xl border border-brand-border shadow-xl max-w-2xl w-full p-5 sm:p-6 relative animate-in fade-in zoom-in-95 max-h-[calc(100vh-2rem)] max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain"
+            onClick={(e) => e.stopPropagation()}
+          >
             <button
               onClick={() => setViewingStaffId(null)}
-              className="absolute top-4 right-4 text-brand-muted hover:text-brand-black p-1.5 rounded-lg hover:bg-neutral-100 cursor-pointer"
+              className="absolute top-4 right-4 text-brand-muted hover:text-brand-black p-1.5 rounded-lg hover:bg-neutral-100 cursor-pointer z-10"
+              aria-label="Close dialog"
             >
               <X className="w-5 h-5" />
             </button>

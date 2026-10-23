@@ -1,0 +1,55 @@
+# Dependencies and package caches
+node_modules
+.npm
+.vite
+.vite-temp
+
+# Build outputs (rebuilt cleanly inside container)
+dist
+
+# Environment configurations and secret files
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.cert
+*.crt
+cookies.txt
+jane_cookies.txt
+
+# Version control
+.git
+.gitignore
+
+# SQLite databases, journals, and local persistent data
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+data/
+
+# Local database backups
+backups/
+
+# Test suites and test diagnostic scripts
+test*.ts
+*.test.ts
+*.spec.ts
+coverage/
+
+# OS, IDE and editor metadata
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Temporary and log files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.aistudio/

@@ -14,12 +14,20 @@ export interface DatabaseBackupResult {
   tableCounts?: Record<string, number>;
   checksumVerified?: boolean;
   error?: string;
+  isUnsupportedEngine?: boolean;
 }
 
 export interface DatabaseBackupItem {
   filename: string;
   sizeBytes: number;
   createdAt: string;
+}
+
+export interface BackupOperationalStatus {
+  engine: 'postgres' | 'sqlite';
+  applicationBackupSupported: boolean;
+  managedExternally: boolean;
+  message: string;
 }
 
 export interface DatabaseRestoreResult {
@@ -93,7 +101,8 @@ export class BackupService {
     if (dbAdapter.isPostgres()) {
       return makeDualResult({
         success: false,
-        error: 'PostgreSQL database backups cannot be generated via SQLite file-level commands. Backups for PostgreSQL must be configured and managed through Google Cloud SQL Automated Backups or GCP Cloud Console.',
+        isUnsupportedEngine: true,
+        error: 'PostgreSQL database backups cannot be generated via SQLite file-level commands. In production, database backups must be configured and managed through Google Cloud SQL Automated Backups or GCP Cloud Console. The application does not create or verify managed database backups directly.',
       });
     }
 
@@ -224,6 +233,28 @@ export class BackupService {
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
     return makeDualResult(files);
+  }
+
+  /**
+   * Returns operational metadata regarding how database backups are managed for the current database engine.
+   * Does NOT claim that Cloud SQL automated backups are enabled, provisioned, or verified.
+   */
+  public getOperationalStatus(actor: SafeUser): BackupOperationalStatus {
+    if (dbAdapter.isPostgres()) {
+      return {
+        engine: 'postgres',
+        applicationBackupSupported: false,
+        managedExternally: true,
+        message: 'In PostgreSQL mode, database backups are not stored locally or managed by this application container. In production, database backup lifecycle and point-in-time recovery must be configured and managed at the cloud infrastructure level (e.g., Google Cloud SQL). The application does not create, manage, or confirm external backups.',
+      };
+    }
+
+    return {
+      engine: 'sqlite',
+      applicationBackupSupported: true,
+      managedExternally: false,
+      message: 'Database backups are created as atomic local file snapshots via SQLite VACUUM INTO and verified on disk.',
+    };
   }
 }
 

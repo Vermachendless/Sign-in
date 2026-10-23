@@ -433,6 +433,14 @@ router.post('/backups', requireSuperAdmin, async (req: AuthenticatedRequest, res
     const result = await backupService.createBackup(actor, clientIp, userAgent);
 
     if (!result.success) {
+      if (result.isUnsupportedEngine) {
+        return sendError(
+          res,
+          409,
+          ApiErrorCode.CONFLICT,
+          result.error || 'Database backup creation is not supported by this application in PostgreSQL mode.'
+        );
+      }
       return sendError(res, 500, ApiErrorCode.INTERNAL_ERROR, result.error || 'Failed to create database backup.');
     }
 
@@ -451,13 +459,14 @@ router.post('/backups', requireSuperAdmin, async (req: AuthenticatedRequest, res
 
 /**
  * GET /api/admin/backups
- * Super Admin only: List verified backups metadata (does not expose raw files)
+ * Super Admin only: List verified backups metadata (does not expose raw files) and operational status
  */
 router.get('/backups', requireSuperAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const actor = req.user!;
     const backups = await backupService.listBackups(actor);
-    return sendSuccess(res, { backups });
+    const operationalStatus = backupService.getOperationalStatus(actor);
+    return sendSuccess(res, { backups, operationalStatus });
   } catch (error) {
     console.error('[AdminRoutes] listBackups error:', error);
     return sendError(res, 500, ApiErrorCode.INTERNAL_ERROR, 'Failed to list database backups.');

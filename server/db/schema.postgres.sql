@@ -210,3 +210,21 @@ CREATE INDEX IF NOT EXISTS idx_access_visits_visitor_visit_id ON access_visits (
 CREATE INDEX IF NOT EXISTS idx_access_visits_status ON access_visits (status);
 CREATE INDEX IF NOT EXISTS idx_access_visits_checked_in_at ON access_visits (checked_in_at);
 CREATE INDEX IF NOT EXISTS idx_access_visits_checked_out_at ON access_visits (checked_out_at);
+
+-- 11. Notifications Table (Phase 3A)
+CREATE TABLE IF NOT EXISTS notifications (
+  id VARCHAR(64) PRIMARY KEY,
+  user_id VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  type VARCHAR(50) NOT NULL,
+  title VARCHAR(255) NOT NULL,
+  message TEXT NOT NULL,
+  metadata TEXT,
+  is_read BOOLEAN NOT NULL DEFAULT FALSE,
+  read_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications (user_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_user_created_at ON notifications (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications (user_id, is_read);
+

@@ -4,13 +4,13 @@ import { UserRole } from '../types/index.ts';
 import {
   Menu,
   Clock,
-  LogOut,
   User as UserIcon,
   ShieldAlert,
   Shield,
   ChevronRight,
 } from 'lucide-react';
 import { AppRoute } from './Sidebar.tsx';
+import { NotificationBell } from './notifications/NotificationBell.tsx';
 
 interface HeaderProps {
   currentRoute: AppRoute;
@@ -18,7 +18,7 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({ currentRoute, onOpenMobileMenu }) => {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const [currentTime, setCurrentTime] = useState<string>('');
 
   useEffect(() => {
@@ -108,28 +108,28 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onOpenMobileMenu }
 
   return (
     <header className="bg-white border-b border-brand-border sticky top-0 z-30 shadow-xs h-16 shrink-0">
-      <div className="h-full px-4 sm:px-6 flex items-center justify-between">
+      <div className="h-full px-3 sm:px-6 flex items-center justify-between gap-2 sm:gap-4">
         {/* Left: Mobile Drawer Trigger + Breadcrumb */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
           <button
             id="mobile-sidebar-toggle-btn"
             onClick={onOpenMobileMenu}
-            className="lg:hidden p-2 rounded-xl text-brand-black hover:bg-neutral-100 transition cursor-pointer"
+            className="lg:hidden p-1.5 sm:p-2 rounded-xl text-brand-black hover:bg-neutral-100 transition cursor-pointer shrink-0"
             title="Open navigation menu"
             aria-label="Open navigation menu"
           >
             <Menu className="w-5 h-5 text-brand-black" />
           </button>
 
-          <div className="flex items-center gap-2 text-xs">
-            <span className="text-brand-muted font-medium hidden sm:inline">{breadcrumb.section}</span>
-            <ChevronRight className="w-3.5 h-3.5 text-neutral-300 hidden sm:inline" />
-            <span className="font-bold text-brand-black sm:text-sm tracking-tight">{breadcrumb.title}</span>
+          <div className="flex items-center gap-1.5 sm:gap-2 text-xs min-w-0">
+            <span className="text-brand-muted font-medium hidden sm:inline shrink-0">{breadcrumb.section}</span>
+            <ChevronRight className="w-3.5 h-3.5 text-neutral-300 hidden sm:inline shrink-0" />
+            <span className="font-bold text-brand-black sm:text-sm tracking-tight truncate block">{breadcrumb.title}</span>
           </div>
         </div>
 
         {/* Right: Live Office Time & User Info */}
-        <div className="flex items-center gap-3 sm:gap-5">
+        <div className="flex items-center gap-2 sm:gap-5 shrink-0">
           {/* Office Time */}
           <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-brand-bg border border-brand-border text-xs text-brand-black">
             <Clock className="w-3.5 h-3.5 text-brand-yellow shrink-0" />
@@ -149,20 +149,12 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onOpenMobileMenu }
             <span className="text-[11px] text-brand-muted">{user.email}</span>
           </div>
 
-          <div className="sm:hidden flex items-center">
+          <div className="sm:hidden flex items-center shrink-0">
             {getRoleBadge(user.role)}
           </div>
 
-          {/* Logout Button */}
-          <button
-            id="logout-btn"
-            onClick={() => logout()}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-neutral-700 hover:text-white bg-neutral-100 hover:bg-neutral-900 border border-neutral-300 hover:border-neutral-900 transition-colors cursor-pointer"
-            title="Sign Out"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Logout</span>
-          </button>
+          {/* Notification Centre Bell & Dropdown */}
+          <NotificationBell />
         </div>
       </div>
     </header>

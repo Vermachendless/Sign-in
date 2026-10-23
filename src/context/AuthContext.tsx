@@ -24,7 +24,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         },
       });
 
-      if (response.ok) {
+      const contentType = response.headers.get('content-type') || '';
+      if (response.ok && contentType.includes('application/json')) {
         const json: ApiResponse<{ user: SafeUser }> = await response.json();
         if (json.success && json.data?.user) {
           setUser(json.data.user);
@@ -55,6 +56,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         body: JSON.stringify({ email, password }),
       });
 
+      const contentType = response.headers.get('content-type') || '';
+      const isJson = contentType.includes('application/json');
+
+      if (!isJson) {
+        // Defensive handling for non-JSON responses (e.g. gateway 502/503 HTML or unexpected responses)
+        console.warn('[AuthContext] Expected JSON response but received:', contentType || 'empty content-type');
+        const errorText = !response.ok
+          ? `Authentication service is currently unavailable (${response.status}). Please try again shortly.`
+          : 'Unexpected server response format. Please try again.';
+        return {
+          success: false,
+          code: 'SERVICE_UNAVAILABLE',
+          error: errorText,
+        };
+      }
+
       const json: ApiResponse<{ user: SafeUser }> = await response.json();
 
       if (response.ok && json.success && json.data?.user) {
@@ -64,7 +81,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       return {
         success: false,
-        code: json.code || 'INVALID_CREDENTIALS',
+        code: json.code || (response.status === 401 ? 'INVALID_CREDENTIALS' : 'AUTH_ERROR'),
         error: json.message || 'Invalid email or password.',
       };
     } catch (err) {

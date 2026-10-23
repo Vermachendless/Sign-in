@@ -2,6 +2,7 @@ import { dbAdapter, type DbAdapter } from '../db/adapter.ts';
 import { generateId } from '../utils/crypto.ts';
 import { auditService } from './audit.service.ts';
 import { accessService } from './access.service.ts';
+import { notificationService } from './notification.service.ts';
 import {
   AccessVisitRecord,
   AccessVisitStatus,
@@ -14,6 +15,7 @@ import {
   EventStatus,
   InviteeStatus,
   VisitorVisitStatus,
+  NotificationType,
 } from '../../src/types/index.ts';
 import {
   COMPANY_TIMEZONE,
@@ -572,6 +574,8 @@ export class ReceptionService {
     // 5. Resolve linked entity and verify lifecycle constraints
     let eventInviteeId: string | null = null;
     let visitorVisitId: string | null = null;
+    let hostStaffId: string | null = null;
+    let visitorPurpose: string | null = null;
     let guestName = 'Unknown Guest';
 
     if (pass.pass_type === PassType.EVENT) {
@@ -610,7 +614,7 @@ export class ReceptionService {
       guestName = invitee.full_name;
     } else if (pass.pass_type === PassType.VISITOR) {
       const visit = await dbAdapter.queryOne<any>(`
-        SELECT vv.id, vv.visitor_full_name, vv.status
+        SELECT vv.id, vv.visitor_full_name, vv.status, vv.host_staff_id, vv.purpose
         FROM visitor_visits vv
         WHERE vv.access_pass_id = $1
       `, [pass.id]);
@@ -633,6 +637,8 @@ export class ReceptionService {
 
       visitorVisitId = visit.id;
       guestName = visit.visitor_full_name;
+      hostStaffId = visit.host_staff_id || pass.host_staff_id || null;
+      visitorPurpose = visit.purpose || null;
     }
 
     // 6. Concurrency-safe atomic transaction
@@ -722,6 +728,27 @@ export class ReceptionService {
           checkedInAt: nowIso,
         },
       });
+
+      // 8. Workflow notification trigger: Notify host staff member of visitor check-in
+      if (pass.pass_type === PassType.VISITOR && hostStaffId) {
+        try {
+          await notificationService.createNotification({
+            userId: hostStaffId,
+            type: NotificationType.VISITOR_CHECKED_IN,
+            title: `Visitor Arrived: ${guestName}`,
+            message: `${guestName} has arrived and checked in at reception.${visitorPurpose ? ` (Purpose: ${visitorPurpose})` : ''}`,
+            metadata: {
+              visitId,
+              visitorVisitId,
+              guestName,
+              displayCode: pass.display_code,
+              checkedInAt: nowIso,
+            },
+          });
+        } catch (notifErr) {
+          console.error('[ReceptionService] Failed to deliver visitor check-in notification:', notifErr);
+        }
+      }
 
       const record = await this.getVisitRecordById(visitId);
       return { success: true, visit: record || undefined };

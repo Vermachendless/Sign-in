@@ -121,9 +121,9 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ curren
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
       {/* Super Admin Banner */}
-      <div className="bg-white rounded-2xl border border-brand-border p-6 sm:p-8 shadow-xs mb-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
+      <div className="bg-white rounded-2xl border border-brand-border p-4 sm:p-6 lg:p-8 shadow-xs mb-6 max-w-full min-w-0">
+        <div className="flex flex-col 2xl:flex-row 2xl:items-center justify-between gap-4 sm:gap-6 min-w-0">
+          <div className="min-w-0 max-w-2xl">
             <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-neutral-900 text-brand-yellow mb-2 border border-brand-yellow/30">
               <ShieldAlert className="w-3.5 h-3.5 text-brand-yellow" />
               Super Admin • Root Governance Authority
@@ -137,71 +137,73 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ curren
           </div>
 
           {/* Navigation Tabs */}
-          <div className="flex items-center bg-brand-bg p-1 rounded-xl border border-brand-border self-start sm:self-auto">
-            <button
-              id="superadmin-tab-today"
-              onClick={() => handleTabChange('TODAY')}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs transition cursor-pointer ${
-                activeTab === 'TODAY'
-                  ? 'bg-brand-yellow text-brand-black font-bold shadow-xs'
-                  : 'text-brand-muted hover:text-brand-black font-semibold'
-              }`}
-            >
-              <Clock className="w-3.5 h-3.5" />
-              <span>Today Overview</span>
-            </button>
+          <div className="w-full 2xl:w-auto bg-brand-bg p-1.5 rounded-xl border border-brand-border self-start 2xl:self-auto min-w-0">
+            <div className="grid grid-cols-2 gap-1.5 md:flex md:flex-wrap 2xl:flex-nowrap md:items-center md:gap-1">
+              <button
+                id="superadmin-tab-today"
+                onClick={() => handleTabChange('TODAY')}
+                className={`flex items-center justify-center md:justify-start gap-1.5 xl:gap-1 px-2.5 py-2 md:px-2.5 md:py-1.5 xl:px-2.5 xl:py-1.5 rounded-lg text-[11px] sm:text-xs md:text-[10px] xl:text-[9px] transition cursor-pointer min-w-0 leading-tight md:whitespace-nowrap ${
+                  activeTab === 'TODAY'
+                    ? 'bg-brand-yellow text-brand-black font-bold shadow-xs'
+                    : 'text-brand-muted hover:text-brand-black font-semibold hover:bg-neutral-200/50'
+                }`}
+              >
+                <Clock className="w-3.5 h-3.5 shrink-0 text-current" />
+                <span>Today Overview</span>
+              </button>
 
-            <button
-              id="superadmin-tab-staff"
-              onClick={() => handleTabChange('STAFF')}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs transition cursor-pointer ${
-                activeTab === 'STAFF'
-                  ? 'bg-brand-yellow text-brand-black font-bold shadow-xs'
-                  : 'text-brand-muted hover:text-brand-black font-semibold'
-              }`}
-            >
-              <Users className="w-3.5 h-3.5" />
-              <span>Staff Management</span>
-            </button>
+              <button
+                id="superadmin-tab-staff"
+                onClick={() => handleTabChange('STAFF')}
+                className={`flex items-center justify-center md:justify-start gap-1.5 xl:gap-1 px-2.5 py-2 md:px-2.5 md:py-1.5 xl:px-2.5 xl:py-1.5 rounded-lg text-[11px] sm:text-xs md:text-[10px] xl:text-[9px] transition cursor-pointer min-w-0 leading-tight md:whitespace-nowrap ${
+                  activeTab === 'STAFF'
+                    ? 'bg-brand-yellow text-brand-black font-bold shadow-xs'
+                    : 'text-brand-muted hover:text-brand-black font-semibold hover:bg-neutral-200/50'
+                }`}
+              >
+                <Users className="w-3.5 h-3.5 shrink-0 text-current" />
+                <span>Staff Management</span>
+              </button>
 
-            <button
-              id="superadmin-tab-reports"
-              onClick={() => handleTabChange('REPORTS')}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs transition cursor-pointer ${
-                activeTab === 'REPORTS'
-                  ? 'bg-brand-yellow text-brand-black font-bold shadow-xs'
-                  : 'text-brand-muted hover:text-brand-black font-semibold'
-              }`}
-            >
-              <FileText className="w-3.5 h-3.5" />
-              <span>Reports &amp; Exports</span>
-            </button>
+              <button
+                id="superadmin-tab-reports"
+                onClick={() => handleTabChange('REPORTS')}
+                className={`flex items-center justify-center md:justify-start gap-1.5 xl:gap-1 px-2.5 py-2 md:px-2.5 md:py-1.5 xl:px-2.5 xl:py-1.5 rounded-lg text-[11px] sm:text-xs md:text-[10px] xl:text-[9px] transition cursor-pointer min-w-0 leading-tight md:whitespace-nowrap ${
+                  activeTab === 'REPORTS'
+                    ? 'bg-brand-yellow text-brand-black font-bold shadow-xs'
+                    : 'text-brand-muted hover:text-brand-black font-semibold hover:bg-neutral-200/50'
+                }`}
+              >
+                <FileText className="w-3.5 h-3.5 shrink-0 text-current" />
+                <span>Reports &amp; Exports</span>
+              </button>
 
-            <button
-              id="superadmin-tab-network"
-              onClick={() => handleTabChange('NETWORK')}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs transition cursor-pointer ${
-                activeTab === 'NETWORK'
-                  ? 'bg-brand-yellow text-brand-black font-bold shadow-xs'
-                  : 'text-brand-muted hover:text-brand-black font-semibold'
-              }`}
-            >
-              <Wifi className="w-3.5 h-3.5" />
-              <span>Office Networks</span>
-            </button>
+              <button
+                id="superadmin-tab-network"
+                onClick={() => handleTabChange('NETWORK')}
+                className={`flex items-center justify-center md:justify-start gap-1.5 xl:gap-1 px-2.5 py-2 md:px-2.5 md:py-1.5 xl:px-2.5 xl:py-1.5 rounded-lg text-[11px] sm:text-xs md:text-[10px] xl:text-[9px] transition cursor-pointer min-w-0 leading-tight md:whitespace-nowrap ${
+                  activeTab === 'NETWORK'
+                    ? 'bg-brand-yellow text-brand-black font-bold shadow-xs'
+                    : 'text-brand-muted hover:text-brand-black font-semibold hover:bg-neutral-200/50'
+                }`}
+              >
+                <Wifi className="w-3.5 h-3.5 shrink-0 text-current" />
+                <span>Office Networks</span>
+              </button>
 
-            <button
-              id="superadmin-tab-governance"
-              onClick={() => handleTabChange('GOVERNANCE')}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs transition cursor-pointer ${
-                activeTab === 'GOVERNANCE'
-                  ? 'bg-brand-yellow text-brand-black font-bold shadow-xs'
-                  : 'text-brand-muted hover:text-brand-black font-semibold'
-              }`}
-            >
-              <Layers className="w-3.5 h-3.5" />
-              <span>Governance &amp; RBAC</span>
-            </button>
+              <button
+                id="superadmin-tab-governance"
+                onClick={() => handleTabChange('GOVERNANCE')}
+                className={`col-span-2 md:col-auto flex items-center justify-center md:justify-start gap-1.5 xl:gap-1 px-2.5 py-2 md:px-2.5 md:py-1.5 xl:px-2.5 xl:py-1.5 rounded-lg text-[11px] sm:text-xs md:text-[10px] xl:text-[9px] transition cursor-pointer min-w-0 leading-tight md:whitespace-nowrap ${
+                  activeTab === 'GOVERNANCE'
+                    ? 'bg-brand-yellow text-brand-black font-bold shadow-xs'
+                    : 'text-brand-muted hover:text-brand-black font-semibold hover:bg-neutral-200/50'
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5 shrink-0 text-current" />
+                <span>Governance &amp; RBAC</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>

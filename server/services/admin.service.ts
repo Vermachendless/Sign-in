@@ -143,7 +143,7 @@ export class AdminService {
     );
 
     // Count all staff accounts in system
-    const totalStaffRow = await dbAdapter.queryOne<{ total_staff: number; active_staff: number }>(
+    const totalStaffRow = await dbAdapter.queryOne<{ total_staff: number | string; active_staff: number | string }>(
       `
       SELECT 
         COUNT(*) AS total_staff,
@@ -153,8 +153,8 @@ export class AdminService {
       `
     );
 
-    const activeStaffCount = totalStaffRow?.active_staff || 0;
-    const totalStaffCount = totalStaffRow?.total_staff || 0;
+    const activeStaffCount = Number(totalStaffRow?.active_staff || 0);
+    const totalStaffCount = Number(totalStaffRow?.total_staff || 0);
 
     let checkedInCount = 0;
     let checkedOutCount = 0;
@@ -271,7 +271,7 @@ export class AdminService {
       role: UserRole;
       status: UserStatus;
       created_at: string;
-      total_attended_days: number;
+      total_attended_days: number | string;
       today_check_in: string | null;
       today_check_out: string | null;
     }>[number]>(query, params);
@@ -292,7 +292,7 @@ export class AdminService {
         role: r.role,
         status: r.status,
         createdAt: r.created_at,
-        totalAttendedDays: r.total_attended_days || 0,
+        totalAttendedDays: Number(r.total_attended_days || 0),
         todayStatus,
       };
     });
@@ -315,7 +315,7 @@ export class AdminService {
       return null;
     }
 
-    const stats = await dbAdapter.queryOne<{ total_attended: number; total_checked_out: number }>(
+    const stats = await dbAdapter.queryOne<{ total_attended: number | string; total_checked_out: number | string }>(
       `
       SELECT 
         COUNT(CASE WHEN check_in IS NOT NULL THEN 1 END) AS total_attended,
@@ -375,8 +375,8 @@ export class AdminService {
         updatedAt: user.updated_at,
       },
       stats: {
-        totalAttendedDays: stats?.total_attended || 0,
-        totalCheckedOutDays: stats?.total_checked_out || 0,
+        totalAttendedDays: Number(stats?.total_attended || 0),
+        totalCheckedOutDays: Number(stats?.total_checked_out || 0),
       },
       recentAttendance,
     };
