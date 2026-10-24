@@ -223,4 +223,38 @@ CREATE TABLE IF NOT EXISTS notifications (
 CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_user_created_at ON notifications(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications(user_id, is_read);
+
+-- Conversations table (Messages Phase 1A)
+CREATE TABLE IF NOT EXISTS conversations (
+  id TEXT PRIMARY KEY,
+  participant1_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  participant2_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  last_message_text TEXT,
+  last_message_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK (participant1_id < participant2_id),
+  UNIQUE (participant1_id, participant2_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversations_p1 ON conversations(participant1_id, last_message_at DESC);
+CREATE INDEX IF NOT EXISTS idx_conversations_p2 ON conversations(participant2_id, last_message_at DESC);
+CREATE INDEX IF NOT EXISTS idx_conversations_last_message ON conversations(last_message_at DESC);
+
+-- Direct messages table (Messages Phase 1A)
+CREATE TABLE IF NOT EXISTS direct_messages (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  sender_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  recipient_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  content TEXT NOT NULL,
+  is_read BOOLEAN NOT NULL DEFAULT 0,
+  read_at TEXT,
+  created_at TEXT NOT NULL,
+  CHECK (sender_id != recipient_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_direct_messages_convo_created ON direct_messages(conversation_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_direct_messages_recipient_unread ON direct_messages(recipient_id, is_read);
+CREATE INDEX IF NOT EXISTS idx_direct_messages_convo_recipient_unread ON direct_messages(conversation_id, recipient_id, is_read);
 `;

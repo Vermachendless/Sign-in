@@ -482,6 +482,8 @@ export class ReceptionService {
   ): Promise<{
     success: boolean;
     visit?: AccessVisitRecord;
+    committed?: boolean;
+    visitId?: string;
     error?: string;
     status?: number;
   }> {
@@ -710,8 +712,26 @@ export class ReceptionService {
           WHERE id = $2
         `, [nowIso, pass.id]);
       });
+    } catch (err: any) {
+      if (err.status) {
+        return {
+          success: false,
+          error: err.message,
+          status: err.status,
+        };
+      }
+      console.error('[ReceptionService] checkIn transaction error:', err);
+      return {
+        success: false,
+        error: 'Database error recording check-in.',
+        status: 500,
+      };
+    }
 
-      // 7. Immutable audit logging after successful transaction commit
+    // --- TRANSACTION COMMITTED SUCCESSFULLY BELOW THIS POINT ---
+
+    // 7. Immutable audit logging after successful transaction commit
+    try {
       await auditService.log({
         actorId: actor.id,
         action: 'ACCESS_CHECKED_IN',
@@ -728,45 +748,59 @@ export class ReceptionService {
           checkedInAt: nowIso,
         },
       });
-
-      // 8. Workflow notification trigger: Notify host staff member of visitor check-in
-      if (pass.pass_type === PassType.VISITOR && hostStaffId) {
-        try {
-          await notificationService.createNotification({
-            userId: hostStaffId,
-            type: NotificationType.VISITOR_CHECKED_IN,
-            title: `Visitor Arrived: ${guestName}`,
-            message: `${guestName} has arrived and checked in at reception.${visitorPurpose ? ` (Purpose: ${visitorPurpose})` : ''}`,
-            metadata: {
-              visitId,
-              visitorVisitId,
-              guestName,
-              displayCode: pass.display_code,
-              checkedInAt: nowIso,
-            },
-          });
-        } catch (notifErr) {
-          console.error('[ReceptionService] Failed to deliver visitor check-in notification:', notifErr);
-        }
-      }
-
-      const record = await this.getVisitRecordById(visitId);
-      return { success: true, visit: record || undefined };
-    } catch (err: any) {
-      if (err.status) {
-        return {
-          success: false,
-          error: err.message,
-          status: err.status,
-        };
-      }
-      console.error('[ReceptionService] checkIn error:', err);
-      return {
-        success: false,
-        error: 'Database error recording check-in.',
-        status: 500,
-      };
+    } catch (auditErr) {
+      console.error('[ReceptionService] Audit log write failed:', auditErr);
     }
+
+    // 8. Workflow notification trigger: Notify host staff member of visitor check-in
+    if (pass.pass_type === PassType.VISITOR && hostStaffId) {
+      try {
+        await notificationService.createNotification({
+          userId: hostStaffId,
+          type: NotificationType.VISITOR_CHECKED_IN,
+          title: `Visitor Arrived: ${guestName}`,
+          message: `${guestName} has arrived and checked in at reception.${visitorPurpose ? ` (Purpose: ${visitorPurpose})` : ''}`,
+          metadata: {
+            visitId,
+            visitorVisitId,
+            guestName,
+            displayCode: pass.display_code,
+            checkedInAt: nowIso,
+          },
+        });
+      } catch (notifErr) {
+        console.error('[ReceptionService] Failed to deliver visitor check-in notification:', notifErr);
+      }
+    }
+
+    // 9. Fetch populated AccessVisitRecord with safe bounded fallback
+    let record: AccessVisitRecord | null = null;
+    try {
+      record = await this.getVisitRecordById(visitId);
+    } catch (fetchErr) {
+      console.warn('[ReceptionService] Primary getVisitRecordById failed, attempting bounded retry:', fetchErr);
+    }
+
+    if (!record) {
+      try {
+        record = await this.getVisitRecordById(visitId);
+      } catch (retryErr) {
+        console.error('[ReceptionService] Bounded fallback getVisitRecordById failed:', retryErr);
+      }
+    }
+
+    if (record) {
+      return { success: true, visit: record };
+    }
+
+    // Explicit, truthful contract for committed check-in whose visit record could not be fetched
+    return {
+      success: false,
+      committed: true,
+      visitId,
+      status: 500,
+      error: 'Check-in was recorded, but visit confirmation could not be loaded. Please refresh the active visits list rather than retrying check-in.',
+    };
   }
 
   /**

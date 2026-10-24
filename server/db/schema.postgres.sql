@@ -228,3 +228,37 @@ CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications (user_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_user_created_at ON notifications (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications (user_id, is_read);
 
+-- 12. Conversations Table (Messages Phase 1A)
+CREATE TABLE IF NOT EXISTS conversations (
+  id VARCHAR(64) PRIMARY KEY,
+  participant1_id VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  participant2_id VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  last_message_text TEXT,
+  last_message_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CHECK (participant1_id < participant2_id),
+  UNIQUE (participant1_id, participant2_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversations_p1 ON conversations (participant1_id, last_message_at DESC NULLS LAST);
+CREATE INDEX IF NOT EXISTS idx_conversations_p2 ON conversations (participant2_id, last_message_at DESC NULLS LAST);
+CREATE INDEX IF NOT EXISTS idx_conversations_last_message ON conversations (last_message_at DESC NULLS LAST);
+
+-- 13. Direct Messages Table (Messages Phase 1A)
+CREATE TABLE IF NOT EXISTS direct_messages (
+  id VARCHAR(64) PRIMARY KEY,
+  conversation_id VARCHAR(64) NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  sender_id VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  recipient_id VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  content TEXT NOT NULL,
+  is_read BOOLEAN NOT NULL DEFAULT FALSE,
+  read_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CHECK (sender_id != recipient_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_direct_messages_convo_created ON direct_messages (conversation_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_direct_messages_recipient_unread ON direct_messages (recipient_id, is_read);
+CREATE INDEX IF NOT EXISTS idx_direct_messages_convo_recipient_unread ON direct_messages (conversation_id, recipient_id, is_read);
+

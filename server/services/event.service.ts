@@ -591,14 +591,21 @@ export class EventService {
     }
 
     const now = new Date().toISOString();
-    await dbAdapter.execute(
+    const updateResult = await dbAdapter.execute(
       `
       UPDATE events
       SET status = $1, approved_by = $2, approved_at = $3, rejection_reason = NULL, updated_at = $4
-      WHERE id = $5
+      WHERE id = $5 AND status = $6
       `,
-      [EventStatus.APPROVED, actor.id, now, now, eventId]
+      [EventStatus.APPROVED, actor.id, now, now, eventId, EventStatus.PENDING_APPROVAL]
     );
+
+    if (updateResult.rowCount === 0) {
+      return {
+        success: false,
+        error: 'Event status was modified by another operation. Approval aborted.',
+      };
+    }
 
     auditService.log({
       actorId: actor.id,
@@ -681,14 +688,21 @@ export class EventService {
     }
 
     const now = new Date().toISOString();
-    await dbAdapter.execute(
+    const updateResult = await dbAdapter.execute(
       `
       UPDATE events
       SET status = $1, approved_by = $2, approved_at = $3, rejection_reason = $4, updated_at = $5
-      WHERE id = $6
+      WHERE id = $6 AND status = $7
       `,
-      [EventStatus.REJECTED, actor.id, now, trimmedReason, now, eventId]
+      [EventStatus.REJECTED, actor.id, now, trimmedReason, now, eventId, EventStatus.PENDING_APPROVAL]
     );
+
+    if (updateResult.rowCount === 0) {
+      return {
+        success: false,
+        error: 'Event status was modified by another operation. Rejection aborted.',
+      };
+    }
 
     auditService.log({
       actorId: actor.id,

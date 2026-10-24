@@ -621,3 +621,78 @@ export interface NotificationListResponse {
   hasMore: boolean;
 }
 
+// ============================================================================
+// Direct Messaging Types (Messages Phase)
+// ============================================================================
+
+export interface ConversationParticipant {
+  id: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  department?: string | null;
+  role: UserRole;
+  status: UserStatus;
+}
+
+export interface ConversationRecord {
+  id: string;
+  participant1Id: string;
+  participant2Id: string;
+  lastMessageText?: string | null;
+  lastMessageAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DirectMessageRecord {
+  id: string;
+  conversationId: string;
+  senderId: string;
+  recipientId: string;
+  content: string;
+  isRead: boolean;
+  readAt?: string | null;
+  createdAt: string;
+}
+
+export interface ConversationSummaryItem {
+  id: string;
+  otherParticipant: ConversationParticipant;
+  lastMessage?: {
+    id: string;
+    senderId: string;
+    content: string;
+    createdAt: string;
+  } | null;
+  unreadCount: number;
+  updatedAt: string;
+}
+
+export interface CreateDirectMessageInput {
+  conversationId: string;
+  senderId: string;
+  recipientId: string;
+  content: string;
+}
+
+export interface DirectMessageListResponse {
+  messages: DirectMessageRecord[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+  hasMore: boolean;
+}
+
+export interface ConversationListResponse {
+  conversations: ConversationSummaryItem[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+  hasMore: boolean;
+}
+
+
+

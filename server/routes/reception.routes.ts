@@ -78,10 +78,22 @@ router.post('/check-in', async (req: AuthenticatedRequest, res: Response) => {
     );
 
     if (!result.success || !result.visit) {
+      if (result.committed) {
+        return res.status(500).json({
+          success: false,
+          code: ApiErrorCode.INTERNAL_ERROR,
+          message: result.error || 'Check-in was recorded, but visit confirmation could not be loaded. Please refresh the active visits list rather than retrying check-in.',
+          committed: true,
+          visitId: result.visitId,
+        });
+      }
+
       const code = result.status === 409
         ? ApiErrorCode.ALREADY_EXISTS
         : result.status === 403
         ? ApiErrorCode.FORBIDDEN
+        : result.status === 500
+        ? ApiErrorCode.INTERNAL_ERROR
         : ApiErrorCode.VALIDATION_ERROR;
       return sendError(res, result.status || 400, code, result.error || 'Check-in failed.');
     }

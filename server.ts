@@ -15,6 +15,7 @@ import accessRoutes from './server/routes/access.routes.ts';
 import visitorRoutes from './server/routes/visitor.routes.ts';
 import receptionRoutes from './server/routes/reception.routes.ts';
 import notificationRoutes from './server/routes/notification.routes.ts';
+import messageRoutes from './server/routes/message.routes.ts';
 
 dotenv.config();
 
@@ -102,6 +103,9 @@ async function startServer() {
 
   // Notification Centre API routes (Phase 3A)
   app.use('/api/notifications', notificationRoutes);
+
+  // Direct Staff Messaging API routes (Messages Phase 1B)
+  app.use('/api/messages', messageRoutes);
 
   // Global API error handler
   app.use(['/api', '/api/*'], (err: Error, req: Request, res: Response, _next: NextFunction) => {
