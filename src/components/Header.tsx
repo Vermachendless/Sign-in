@@ -49,6 +49,8 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onOpenMobileMenu }
     switch (currentRoute) {
       case 'today':
         return { section: 'Overview', title: 'Today Overview' };
+      case 'messages':
+        return { section: 'Communication', title: 'Direct Messages' };
       case 'attendance':
       case 'my-attendance':
         return { section: 'Attendance', title: user.role === UserRole.STAFF ? 'My Attendance History' : 'Live Attendance' };

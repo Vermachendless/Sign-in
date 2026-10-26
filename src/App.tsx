@@ -9,6 +9,7 @@ import { SuperAdminDashboard } from './components/SuperAdminDashboard.tsx';
 import { EventsManagement } from './components/EventsManagement.tsx';
 import { VisitorsManagement } from './components/visitors/VisitorsManagement.tsx';
 import { ReceptionDashboard } from './components/reception/ReceptionDashboard.tsx';
+import { MessagesView } from './components/messages/MessagesView.tsx';
 import { UserRole } from './types/index.ts';
 import { Building2 } from 'lucide-react';
 
@@ -53,7 +54,12 @@ const MainContent: React.FC = () => {
     if (!user) return;
 
     if (user.role === UserRole.STAFF) {
-      if (currentRoute !== 'today' && currentRoute !== 'my-attendance' && currentRoute !== 'my-visitors') {
+      if (
+        currentRoute !== 'today' &&
+        currentRoute !== 'my-attendance' &&
+        currentRoute !== 'my-visitors' &&
+        currentRoute !== 'messages'
+      ) {
         setCurrentRoute('today');
       }
     } else if (user.role === UserRole.ADMIN) {
@@ -110,7 +116,11 @@ const MainContent: React.FC = () => {
 
         {/* Dynamic Page Content */}
         <main className="flex-1 pb-10">
-          {currentRoute === 'events' ? (
+          {currentRoute === 'messages' ? (
+            <div className="max-w-7xl mx-auto px-2 sm:px-6 py-4 sm:py-6 h-[calc(100vh-4rem)]">
+              <MessagesView />
+            </div>
+          ) : currentRoute === 'events' ? (
             <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
               <EventsManagement />
             </div>

@@ -560,6 +560,129 @@ async function main() {
       assert.strictEqual(resContacts.statusCode, 200);
       assert(resContacts.body.data.hasOwnProperty('contacts'), 'Must hit contacts handler, not :id handler');
     });
+
+    // TEST SECTION 8: CONVERSATION PREVIEW CONCURRENCY & ORDERING (STEP 1C)
+    await runTest('8.1. Newer message processed before older message preserves newer preview', async () => {
+      // Create isolated conversation between Alice and Charlie
+      const convRes = await messageService.getOrCreateConversation(alice.id, charlie.id);
+      const testConvId = convRes.conversation.id;
+
+      const tNewer = '2026-10-25T12:00:05.000Z';
+      const tOlder = '2026-10-25T12:00:01.000Z';
+
+      // 1. Process newer message first (simulating out-of-order execution / delayed older send)
+      const msgNewer = await messageService.sendMessage(
+        alice.id,
+        testConvId,
+        'Newer message content at T2',
+        { createdAt: tNewer, messageId: 'msg_t2_' + generateId().slice(0, 8) }
+      );
+      assert(msgNewer);
+
+      const convAfterNewer = await messageService.getConversationById(alice.id, testConvId);
+      assert.strictEqual(convAfterNewer?.lastMessageText, 'Newer message content at T2');
+      assert.strictEqual(convAfterNewer?.lastMessageAt, tNewer);
+
+      // 2. Now process older message with timestamp T1 < T2
+      const msgOlder = await messageService.sendMessage(
+        alice.id,
+        testConvId,
+        'Older delayed message content at T1',
+        { createdAt: tOlder, messageId: 'msg_t1_' + generateId().slice(0, 8) }
+      );
+      assert(msgOlder);
+
+      // 3. Conversation preview must NOT be overwritten by the older message
+      const convAfterOlder = await messageService.getConversationById(alice.id, testConvId);
+      assert.strictEqual(
+        convAfterOlder?.lastMessageText,
+        'Newer message content at T2',
+        'Conversation preview must remain the newer message text'
+      );
+      assert.strictEqual(
+        convAfterOlder?.lastMessageAt,
+        tNewer,
+        'Conversation lastMessageAt must remain the newer timestamp'
+      );
+      assert.strictEqual(
+        convAfterOlder?.updatedAt,
+        tNewer,
+        'Conversation updatedAt must remain consistent with the latest message'
+      );
+    });
+
+    await runTest('8.2. Equal timestamps resolve deterministically by id DESC', async () => {
+      // Create isolated conversation for tie-breaking test
+      const testUserX = await createTestUser('tie_x', 'TieX', 'Tester', 'Engineering', 'ACTIVE');
+      const testUserY = await createTestUser('tie_y', 'TieY', 'Tester', 'Design', 'ACTIVE');
+      const convRes = await messageService.getOrCreateConversation(testUserX.id, testUserY.id);
+      const tieConvId = convRes.conversation.id;
+
+      const tEqual = '2026-10-25T14:00:00.000Z';
+      const suffix = generateId().slice(0, 8);
+      // 'msg_tie_z_...' > 'msg_tie_a_...' lexicographically
+      const idWinner = `msg_tie_z_${suffix}`;
+      const idLoser = `msg_tie_a_${suffix}`;
+
+      // Send winner first, then loser
+      await messageService.sendMessage(
+        testUserX.id,
+        tieConvId,
+        'Content from Winner ID Z',
+        { createdAt: tEqual, messageId: idWinner }
+      );
+      await messageService.sendMessage(
+        testUserX.id,
+        tieConvId,
+        'Content from Loser ID A',
+        { createdAt: tEqual, messageId: idLoser }
+      );
+
+      const convCheck = await messageService.getConversationById(testUserX.id, tieConvId);
+      assert.strictEqual(
+        convCheck?.lastMessageText,
+        'Content from Winner ID Z',
+        'When timestamps are equal, id DESC must determine the preview message'
+      );
+      assert.strictEqual(convCheck?.lastMessageAt, tEqual);
+
+      // Verify listConversations also reports the exact same latest message
+      const listRes = await messageService.listConversations(testUserX.id);
+      const convSummary = listRes.conversations.find((c) => c.id === tieConvId);
+      assert.strictEqual(convSummary?.lastMessage?.id, idWinner);
+      assert.strictEqual(convSummary?.lastMessage?.content, 'Content from Winner ID Z');
+    });
+
+    await runTest('8.3. Preview truncation (120 chars) and consistency across messages list and unread counts', async () => {
+      const convRes = await messageService.getOrCreateConversation(alice.id, charlie.id);
+      const testConvId = convRes.conversation.id;
+
+      // Send a 150-char message
+      const longContent = 'A'.repeat(150);
+      const tLong = '2026-10-25T15:00:00.000Z';
+      await messageService.sendMessage(
+        alice.id,
+        testConvId,
+        longContent,
+        { createdAt: tLong, messageId: 'msg_long_' + generateId().slice(0, 8) }
+      );
+
+      const convCheck = await messageService.getConversationById(alice.id, testConvId);
+      assert.strictEqual(convCheck?.lastMessageText?.length, 120);
+      assert(convCheck?.lastMessageText?.endsWith('...'), 'Long message must be truncated with ellipsis');
+      assert.strictEqual(convCheck?.lastMessageAt, tLong);
+      assert.strictEqual(convCheck?.updatedAt, tLong);
+
+      // Verify unread count for recipient Charlie
+      const unreadCharlie = await messageService.getUnreadCount(charlie.id);
+      assert(unreadCharlie >= 3, 'Charlie must have received unread messages');
+
+      // Verify listMessages preserves full content and chronological ordering
+      const msgList = await messageService.listMessages(alice.id, testConvId);
+      assert(msgList);
+      const lastMsgInList = msgList.messages[msgList.messages.length - 1];
+      assert.strictEqual(lastMsgInList.content, longContent, 'Message history must store full untruncated content');
+    });
   } finally {
     server.close();
   }

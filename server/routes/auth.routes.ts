@@ -7,15 +7,42 @@ import { sendSuccess, sendError, ApiErrorCode } from '../utils/apiResponse.ts';
 const router = Router();
 
 /**
- * Cookie configuration helper
+ * Helper to determine if the request is running in an HTTPS context.
+ * Considers production environment or Express trusted proxy req.secure flag.
  */
-function getCookieOptions() {
-  const isProduction = process.env.NODE_ENV === 'production';
+export function isHttpsRequest(req?: AuthenticatedRequest): boolean {
+  if (process.env.NODE_ENV === 'production') {
+    return true;
+  }
+  return Boolean(req?.secure);
+}
+
+/**
+ * Cookie configuration helper
+ * For HTTPS deployments requiring cross-site iframe cookies: HttpOnly, Secure: true, SameSite: 'none'.
+ * For local plain-HTTP development: HttpOnly, Secure: false, SameSite: 'lax'.
+ */
+export function getCookieOptions(req?: AuthenticatedRequest) {
+  const isHttps = isHttpsRequest(req);
   return {
     httpOnly: true,
-    secure: isProduction,
-    sameSite: 'lax' as const,
+    secure: isHttps,
+    sameSite: isHttps ? ('none' as const) : ('lax' as const),
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    path: '/',
+  };
+}
+
+/**
+ * Cookie options helper for clearing session cookies
+ * Preserves same path, secure, and sameSite attributes so browser can clear it.
+ */
+export function getClearCookieOptions(req?: AuthenticatedRequest) {
+  const isHttps = isHttpsRequest(req);
+  return {
+    httpOnly: true,
+    secure: isHttps,
+    sameSite: isHttps ? ('none' as const) : ('lax' as const),
     path: '/',
   };
 }
@@ -52,8 +79,8 @@ router.post('/login', authRateLimiter, async (req: AuthenticatedRequest, res: Re
       );
     }
 
-    // Set secure HTTP-only session cookie
-    res.cookie('session_token', result.token, getCookieOptions());
+    // Set secure HTTP-only session cookie (HTTPS / cross-site iframe aware)
+    res.cookie('session_token', result.token, getCookieOptions(req));
 
     return sendSuccess(res, {
       user: result.user,
@@ -79,7 +106,7 @@ router.post('/logout', async (req: AuthenticatedRequest, res: Response) => {
       await authService.logout(token, ipAddress, userAgent);
     }
 
-    res.clearCookie('session_token', { path: '/' });
+    res.clearCookie('session_token', getClearCookieOptions(req));
     return sendSuccess(res, { message: 'Logged out successfully.' });
   } catch (error) {
     console.error('[AuthRoutes] Logout error:', error);

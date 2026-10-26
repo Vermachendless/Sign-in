@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext.tsx';
 import { UserRole } from '../types/index.ts';
 import {
@@ -23,6 +23,7 @@ import {
   User as UserIcon,
   ShieldAlert,
   ShieldCheck,
+  MessageSquare,
 } from 'lucide-react';
 
 export type AppRoute =
@@ -39,7 +40,8 @@ export type AppRoute =
   | 'users-roles'
   | 'audit-logs'
   | 'governance'
-  | 'security';
+  | 'security'
+  | 'messages';
 
 interface NavItem {
   id: AppRoute | string;
@@ -75,8 +77,57 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [hoveredItem, setHoveredItem] = useState<{ id: string; label: string; section: string; upcoming?: boolean } | null>(null);
   const [showProfileModal, setShowProfileModal] = useState(false);
+  const [unreadMessagesCount, setUnreadMessagesCount] = useState<number>(0);
+
+  // Poll unread messages count every 30s and listen to real-time update events
+  useEffect(() => {
+    if (!user) {
+      setUnreadMessagesCount(0);
+      return;
+    }
+
+    const fetchUnread = async () => {
+      try {
+        const res = await fetch('/api/messages/unread-count', {
+          headers: { Accept: 'application/json' },
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success && typeof json.data?.unreadCount === 'number') {
+            setUnreadMessagesCount(json.data.unreadCount);
+          }
+        }
+      } catch {
+        // Non-fatal background fetch
+      }
+    };
+
+    fetchUnread();
+    const intervalId = setInterval(() => {
+      if (!document.hidden) fetchUnread();
+    }, 30000);
+
+    const handleFocus = () => fetchUnread();
+    const handleUnreadUpdate = (e: Event) => {
+      const customEvent = e as CustomEvent<{ unreadCount: number }>;
+      if (typeof customEvent.detail?.unreadCount === 'number') {
+        setUnreadMessagesCount(customEvent.detail.unreadCount);
+      }
+    };
+
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('messages-unread-updated', handleUnreadUpdate);
+
+    return () => {
+      clearInterval(intervalId);
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('messages-unread-updated', handleUnreadUpdate);
+    };
+  }, [user]);
 
   if (!user) return null;
+
+  const unreadBadge = unreadMessagesCount > 0 ? (unreadMessagesCount > 99 ? '99+' : String(unreadMessagesCount)) : undefined;
 
   // Build role-based navigation structure
   const getNavSections = (): NavSection[] => {
@@ -89,6 +140,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
               id: 'today',
               label: 'Today',
               icon: LayoutDashboard,
+            },
+          ],
+        },
+        {
+          title: 'COMMUNICATION',
+          items: [
+            {
+              id: 'messages',
+              label: 'Messages',
+              icon: MessageSquare,
+              badge: unreadBadge,
             },
           ],
         },
@@ -158,6 +220,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
           ],
         },
         {
+          title: 'COMMUNICATION',
+          items: [
+            {
+              id: 'messages',
+              label: 'Messages',
+              icon: MessageSquare,
+              badge: unreadBadge,
+            },
+          ],
+        },
+        {
           title: 'ACCESS & EVENTS',
           items: [
             {
@@ -206,6 +279,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
             id: 'today',
             label: 'Today',
             icon: LayoutDashboard,
+          },
+        ],
+      },
+      {
+        title: 'COMMUNICATION',
+        items: [
+          {
+            id: 'messages',
+            label: 'Messages',
+            icon: MessageSquare,
+            badge: unreadBadge,
           },
         ],
       },
@@ -440,11 +524,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         }`}
                       />
 
+                      {/* Collapsed Unread Dot Indicator */}
+                      {isCollapsed && !isMobileOpen && item.badge && item.id === 'messages' && (
+                        <span className="absolute top-1.5 right-2 w-2 h-2 rounded-full bg-brand-yellow ring-1 ring-black" />
+                      )}
+
                       {(!isCollapsed || isMobileOpen) && (
                         <div className="flex-1 flex items-center justify-between min-w-0">
                           <span className="truncate">{item.label}</span>
                           {item.badge && (
-                            <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-400 border border-neutral-700 uppercase tracking-wide">
+                            <span
+                              className={`text-[9px] font-semibold px-1.5 py-0.5 rounded tracking-wide ${
+                                item.id === 'messages' && isActive
+                                  ? 'bg-neutral-900 text-brand-yellow border border-neutral-900'
+                                  : item.id === 'messages'
+                                  ? 'bg-brand-yellow text-brand-black font-bold'
+                                  : 'bg-neutral-800 text-neutral-400 border border-neutral-700 uppercase'
+                              }`}
+                            >
                               {item.badge}
                             </span>
                           )}

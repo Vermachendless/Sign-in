@@ -330,11 +330,14 @@ export class MessageService {
    * Send a direct message in a conversation.
    * Validates plain-text content length (1–2000 chars), derives sender from auth,
    * checks active recipient status, and atomically commits message + conversation activity preview.
+   * Concurrency-safe: maintains conversation preview from the latest message under (created_at DESC, id DESC),
+   * preventing older or overlapping sends from overwriting the latest message preview.
    */
   public async sendMessage(
     userId: string,
     conversationId: string,
-    rawContent: string
+    rawContent: string,
+    options?: { createdAt?: string; messageId?: string }
   ): Promise<DirectMessageRecord | null> {
     if (!userId || !conversationId) return null;
 
@@ -363,11 +366,15 @@ export class MessageService {
       throw new Error('Cannot send message: Recipient account is inactive or suspended.');
     }
 
-    const messageId = generateId();
-    const nowIso = new Date().toISOString();
-    const previewSnippet = content.length > 120 ? content.slice(0, 117) + '...' : content;
+    const messageId = options?.messageId || generateId();
+    const nowIso = options?.createdAt || new Date().toISOString();
 
     await dbAdapter.transaction(async (tx) => {
+      // In PostgreSQL, serialize concurrent writes on the same conversation row
+      if (tx.isPostgres()) {
+        await tx.execute('SELECT id FROM conversations WHERE id = $1 FOR UPDATE', [conversationId]);
+      }
+
       // 1. Insert direct_messages record
       await tx.execute(
         `INSERT INTO direct_messages (
@@ -376,14 +383,39 @@ export class MessageService {
         [messageId, conversationId, userId, recipientId, content, nowIso]
       );
 
-      // 2. Update conversation activity preview atomically
+      // 2. Update conversation activity preview atomically and deterministically.
+      // Derives last_message_text, last_message_at, and updated_at directly from the actual
+      // latest message in direct_messages using the canonical ordering (created_at DESC, id DESC).
+      // This prevents an older concurrent send from overwriting a newer message's preview,
+      // and resolves equal-timestamp ties deterministically by id DESC.
       await tx.execute(
         `UPDATE conversations
-         SET last_message_text = $1,
-             last_message_at = $2,
-             updated_at = $3
-         WHERE id = $4`,
-        [previewSnippet, nowIso, nowIso, conversationId]
+         SET last_message_text = (
+               SELECT CASE 
+                 WHEN LENGTH(content) > 120 THEN SUBSTR(content, 1, 117) || '...'
+                 ELSE content 
+               END
+               FROM direct_messages
+               WHERE conversation_id = conversations.id
+               ORDER BY created_at DESC, id DESC
+               LIMIT 1
+             ),
+             last_message_at = (
+               SELECT created_at
+               FROM direct_messages
+               WHERE conversation_id = conversations.id
+               ORDER BY created_at DESC, id DESC
+               LIMIT 1
+             ),
+             updated_at = (
+               SELECT created_at
+               FROM direct_messages
+               WHERE conversation_id = conversations.id
+               ORDER BY created_at DESC, id DESC
+               LIMIT 1
+             )
+         WHERE id = $1`,
+        [conversationId]
       );
     });
 
