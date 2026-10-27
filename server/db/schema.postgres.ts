@@ -260,6 +260,45 @@ CREATE TABLE IF NOT EXISTS direct_messages (
 CREATE INDEX IF NOT EXISTS idx_direct_messages_convo_created ON direct_messages (conversation_id, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_direct_messages_recipient_unread ON direct_messages (recipient_id, is_read);
 CREATE INDEX IF NOT EXISTS idx_direct_messages_convo_recipient_unread ON direct_messages (conversation_id, recipient_id, is_read);
+
+-- 14. Feed Posts Table (Feeds Phase 2A)
+CREATE TABLE IF NOT EXISTS feed_posts (
+  id VARCHAR(64) PRIMARY KEY,
+  author_id VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  content TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_feed_posts_created_at ON feed_posts (created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_feed_posts_author ON feed_posts (author_id, created_at DESC);
+
+-- 15. Feed Comments Table (Feeds Phase 2A)
+CREATE TABLE IF NOT EXISTS feed_comments (
+  id VARCHAR(64) PRIMARY KEY,
+  post_id VARCHAR(64) NOT NULL REFERENCES feed_posts(id) ON DELETE CASCADE,
+  author_id VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  content TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_feed_comments_post_created ON feed_comments (post_id, created_at ASC, id ASC);
+CREATE INDEX IF NOT EXISTS idx_feed_comments_author ON feed_comments (author_id);
+
+-- 16. Feed Reactions Table (Feeds Phase 2A)
+CREATE TABLE IF NOT EXISTS feed_reactions (
+  id VARCHAR(64) PRIMARY KEY,
+  post_id VARCHAR(64) NOT NULL REFERENCES feed_posts(id) ON DELETE CASCADE,
+  user_id VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reaction_type VARCHAR(20) NOT NULL CHECK (reaction_type IN ('LIKE', 'CELEBRATE', 'SUPPORT', 'INSIGHTFUL')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (post_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_feed_reactions_post ON feed_reactions (post_id);
+CREATE INDEX IF NOT EXISTS idx_feed_reactions_user ON feed_reactions (user_id);
+CREATE INDEX IF NOT EXISTS idx_feed_reactions_post_type ON feed_reactions (post_id, reaction_type);
 `;
 
 /**

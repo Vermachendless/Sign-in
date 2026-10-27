@@ -257,4 +257,44 @@ CREATE TABLE IF NOT EXISTS direct_messages (
 CREATE INDEX IF NOT EXISTS idx_direct_messages_convo_created ON direct_messages(conversation_id, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_direct_messages_recipient_unread ON direct_messages(recipient_id, is_read);
 CREATE INDEX IF NOT EXISTS idx_direct_messages_convo_recipient_unread ON direct_messages(conversation_id, recipient_id, is_read);
+
+-- Feed Posts table (Feeds Phase 2A)
+CREATE TABLE IF NOT EXISTS feed_posts (
+  id TEXT PRIMARY KEY,
+  author_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  content TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_feed_posts_created_at ON feed_posts(created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_feed_posts_author ON feed_posts(author_id, created_at DESC);
+
+-- Feed Comments table (Feeds Phase 2A)
+CREATE TABLE IF NOT EXISTS feed_comments (
+  id TEXT PRIMARY KEY,
+  post_id TEXT NOT NULL REFERENCES feed_posts(id) ON DELETE CASCADE,
+  author_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  content TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_feed_comments_post_created ON feed_comments(post_id, created_at ASC, id ASC);
+CREATE INDEX IF NOT EXISTS idx_feed_comments_author ON feed_comments(author_id);
+
+-- Feed Reactions table (Feeds Phase 2A)
+CREATE TABLE IF NOT EXISTS feed_reactions (
+  id TEXT PRIMARY KEY,
+  post_id TEXT NOT NULL REFERENCES feed_posts(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reaction_type TEXT NOT NULL CHECK(reaction_type IN ('LIKE', 'CELEBRATE', 'SUPPORT', 'INSIGHTFUL')),
+  created_at TEXT NOT NULL,
+  UNIQUE(post_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_feed_reactions_post ON feed_reactions(post_id);
+CREATE INDEX IF NOT EXISTS idx_feed_reactions_user ON feed_reactions(user_id);
+CREATE INDEX IF NOT EXISTS idx_feed_reactions_post_type ON feed_reactions(post_id, reaction_type);
 `;
+

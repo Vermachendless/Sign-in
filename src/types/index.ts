@@ -694,5 +694,79 @@ export interface ConversationListResponse {
   hasMore: boolean;
 }
 
+export type FeedReactionType = 'LIKE' | 'CELEBRATE' | 'SUPPORT' | 'INSIGHTFUL';
+
+export interface FeedAuthor {
+  id: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  department?: string | null;
+  role: UserRole;
+  status?: UserStatus;
+}
+
+export interface FeedPostRecord {
+  id: string;
+  authorId: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FeedPostItem {
+  id: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+  author: FeedAuthor;
+  stats: {
+    commentsCount: number;
+    reactionsCount: number;
+    reactions: Record<FeedReactionType, number>;
+  };
+  currentUserReaction: FeedReactionType | null;
+}
+
+export interface FeedCommentRecord {
+  id: string;
+  postId: string;
+  authorId: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FeedCommentItem {
+  id: string;
+  postId: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+  author: FeedAuthor;
+}
+
+export interface FeedReactionRecord {
+  id: string;
+  postId: string;
+  userId: string;
+  reactionType: FeedReactionType;
+  createdAt: string;
+}
+
+export interface FeedPostListResponse {
+  posts: FeedPostItem[];
+  nextCursor?: string | null;
+  hasMore: boolean;
+}
+
+export interface ToggleReactionResult {
+  action: 'ADDED' | 'REMOVED' | 'UPDATED';
+  reactionType: FeedReactionType | null;
+  reactions: Record<FeedReactionType, number>;
+  totalReactions: number;
+}
+
+
 
 

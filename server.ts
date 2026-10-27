@@ -16,6 +16,7 @@ import visitorRoutes from './server/routes/visitor.routes.ts';
 import receptionRoutes from './server/routes/reception.routes.ts';
 import notificationRoutes from './server/routes/notification.routes.ts';
 import messageRoutes from './server/routes/message.routes.ts';
+import feedRoutes from './server/routes/feed.routes.ts';
 
 dotenv.config();
 
@@ -106,6 +107,9 @@ async function startServer() {
 
   // Direct Staff Messaging API routes (Messages Phase 1B)
   app.use('/api/messages', messageRoutes);
+
+  // Staff Feed & Announcements API routes (Feeds Phase 2B)
+  app.use('/api/feed', feedRoutes);
 
   // Global API error handler
   app.use(['/api', '/api/*'], (err: Error, req: Request, res: Response, _next: NextFunction) => {

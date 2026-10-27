@@ -49,6 +49,8 @@ export const Header: React.FC<HeaderProps> = ({ currentRoute, onOpenMobileMenu }
     switch (currentRoute) {
       case 'today':
         return { section: 'Overview', title: 'Today Overview' };
+      case 'feed':
+        return { section: 'Communication', title: 'Staff Feed & Announcements' };
       case 'messages':
         return { section: 'Communication', title: 'Direct Messages' };
       case 'attendance':

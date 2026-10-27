@@ -24,6 +24,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   MessageSquare,
+  Megaphone,
 } from 'lucide-react';
 
 export type AppRoute =
@@ -41,7 +42,8 @@ export type AppRoute =
   | 'audit-logs'
   | 'governance'
   | 'security'
-  | 'messages';
+  | 'messages'
+  | 'feed';
 
 interface NavItem {
   id: AppRoute | string;
@@ -147,6 +149,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
           title: 'COMMUNICATION',
           items: [
             {
+              id: 'feed',
+              label: 'Staff Feed & Announcements',
+              icon: Megaphone,
+            },
+            {
               id: 'messages',
               label: 'Messages',
               icon: MessageSquare,
@@ -223,6 +230,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
           title: 'COMMUNICATION',
           items: [
             {
+              id: 'feed',
+              label: 'Staff Feed & Announcements',
+              icon: Megaphone,
+            },
+            {
               id: 'messages',
               label: 'Messages',
               icon: MessageSquare,
@@ -285,6 +297,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {
         title: 'COMMUNICATION',
         items: [
+          {
+            id: 'feed',
+            label: 'Staff Feed & Announcements',
+            icon: Megaphone,
+          },
           {
             id: 'messages',
             label: 'Messages',
