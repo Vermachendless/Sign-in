@@ -122,7 +122,17 @@ export const FeedView: React.FC = () => {
   };
 
   const handlePostCreated = (newPost: FeedPostItem) => {
-    setPosts((prev) => [newPost, ...prev.filter((p) => p.id !== newPost.id)]);
+    setPosts((prev) => {
+      const filtered = prev.filter((p) => p.id !== newPost.id);
+      if (newPost.pinnedAt) {
+        const otherPinned = filtered.filter((p) => Boolean(p.pinnedAt));
+        const unpinned = filtered.filter((p) => !p.pinnedAt);
+        return [newPost, ...otherPinned, ...unpinned];
+      }
+      const pinned = filtered.filter((p) => Boolean(p.pinnedAt));
+      const unpinned = filtered.filter((p) => !p.pinnedAt);
+      return [...pinned, newPost, ...unpinned];
+    });
   };
 
   const handlePostDeleted = (postId: string) => {
@@ -130,9 +140,18 @@ export const FeedView: React.FC = () => {
   };
 
   const handlePostUpdated = (updatedPost: FeedPostItem) => {
-    setPosts((prev) =>
-      prev.map((p) => (p.id === updatedPost.id ? updatedPost : p))
-    );
+    setPosts((prev) => {
+      const next = prev.map((p) => (p.id === updatedPost.id ? updatedPost : p));
+      const pinned = next
+        .filter((p) => Boolean(p.pinnedAt))
+        .sort((a, b) => {
+          const timeA = new Date(a.pinnedAt || a.createdAt).getTime();
+          const timeB = new Date(b.pinnedAt || b.createdAt).getTime();
+          return timeB - timeA;
+        });
+      const unpinned = next.filter((p) => !p.pinnedAt);
+      return [...pinned, ...unpinned];
+    });
   };
 
   if (!user) return null;
@@ -204,6 +223,7 @@ export const FeedView: React.FC = () => {
       <FeedComposer
         onPostCreated={handlePostCreated}
         onError={(msg) => setFeedError(msg)}
+        userRole={user.role}
       />
 
       {/* Post List */}

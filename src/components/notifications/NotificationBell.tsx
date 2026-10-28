@@ -86,6 +86,12 @@ const NotificationTypeIcon: React.FC<{ type: NotificationType | string }> = ({ t
           <Clock className="w-4 h-4" />
         </div>
       );
+    case NotificationType.ANNOUNCEMENT:
+      return (
+        <div className="p-2 rounded-xl bg-amber-50 border border-amber-200/70 text-amber-700 shrink-0">
+          <BellRing className="w-4 h-4" />
+        </div>
+      );
     case NotificationType.SYSTEM:
     default:
       return (

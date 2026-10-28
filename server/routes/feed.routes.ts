@@ -2,7 +2,12 @@ import { Router, Response } from 'express';
 import { requireAuth, AuthenticatedRequest } from '../middleware/auth.ts';
 import { feedService, decodeFeedCursor } from '../services/feed.service.ts';
 import { sendSuccess, sendError, ApiErrorCode } from '../utils/apiResponse.ts';
-import { FeedReactionType, UserStatus } from '../../src/types/index.ts';
+import {
+  FeedReactionType,
+  UserStatus,
+  UserRole,
+  AnnouncementPriority,
+} from '../../src/types/index.ts';
 
 const router = Router();
 
@@ -67,8 +72,9 @@ router.get('/posts', async (req: AuthenticatedRequest, res: Response) => {
 
 /**
  * POST /api/feed/posts
- * Publish a new post. Content is validated as plain text between 1 and 3,000 characters.
+ * Publish a new post or official announcement. Content is validated as plain text (1-3,000 chars).
  * Identity is derived strictly from req.user.id (anti-spoofing).
+ * Only ADMIN and SUPER_ADMIN can create official announcements, set elevated priority, or pin posts.
  */
 router.post('/posts', async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -77,7 +83,7 @@ router.post('/posts', async (req: AuthenticatedRequest, res: Response) => {
       return sendError(res, 403, ApiErrorCode.FORBIDDEN, 'Only active users can create posts.');
     }
 
-    const { content } = req.body || {};
+    const { content, isAnnouncement, priority, isPinned } = req.body || {};
     if (typeof content !== 'string') {
       return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, 'Post content must be a string.');
     }
@@ -96,17 +102,193 @@ router.post('/posts', async (req: AuthenticatedRequest, res: Response) => {
       );
     }
 
-    const post = await feedService.createPost(user.id, trimmed);
+    if (isAnnouncement !== undefined && typeof isAnnouncement !== 'boolean') {
+      return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, 'isAnnouncement must be a boolean.');
+    }
+
+    if (isPinned !== undefined && typeof isPinned !== 'boolean') {
+      return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, 'isPinned must be a boolean.');
+    }
+
+    if (priority !== undefined) {
+      if (typeof priority !== 'string' || !['NORMAL', 'IMPORTANT', 'URGENT'].includes(priority)) {
+        return sendError(
+          res,
+          400,
+          ApiErrorCode.VALIDATION_ERROR,
+          "Invalid priority. Must be one of: 'NORMAL', 'IMPORTANT', 'URGENT'."
+        );
+      }
+    }
+
+    const wantsAnnouncement = Boolean(isAnnouncement);
+    const wantsElevatedPriority = priority !== undefined && priority !== 'NORMAL';
+    const wantsPin = Boolean(isPinned);
+
+    // Enforce role authorization: STAFF cannot create announcements, set elevated priority, or pin
+    if (wantsAnnouncement || wantsElevatedPriority || wantsPin) {
+      if (user.role !== UserRole.ADMIN && user.role !== UserRole.SUPER_ADMIN) {
+        return sendError(
+          res,
+          403,
+          ApiErrorCode.FORBIDDEN,
+          'Only administrators can create announcements, set elevated priority, or pin posts.'
+        );
+      }
+    }
+
+    if (wantsPin && !wantsAnnouncement) {
+      return sendError(
+        res,
+        400,
+        ApiErrorCode.VALIDATION_ERROR,
+        'Only official announcements can be pinned.'
+      );
+    }
+
+    if (wantsElevatedPriority && !wantsAnnouncement) {
+      return sendError(
+        res,
+        400,
+        ApiErrorCode.VALIDATION_ERROR,
+        'Elevated priority is only permitted for official announcements.'
+      );
+    }
+
+    const post = await feedService.createPost(user.id, trimmed, {
+      isAnnouncement: wantsAnnouncement,
+      priority: priority as AnnouncementPriority,
+      isPinned: wantsPin,
+    });
     return sendSuccess(res, { post }, 201);
   } catch (error: any) {
     console.error('[FeedRoutes] createPost error:', error?.message || error);
+    if (error?.message?.includes('Forbidden') || error?.message?.includes('Only administrators')) {
+      return sendError(res, 403, ApiErrorCode.FORBIDDEN, error.message);
+    }
     if (error?.message?.includes('active users')) {
       return sendError(res, 403, ApiErrorCode.FORBIDDEN, error.message);
     }
-    if (error?.message?.includes('content') || error?.message?.includes('empty')) {
+    if (
+      error?.message?.includes('content') ||
+      error?.message?.includes('empty') ||
+      error?.message?.includes('priority') ||
+      error?.message?.includes('Only official announcements') ||
+      error?.message?.includes('Elevated priority')
+    ) {
       return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, error.message);
     }
     return sendError(res, 500, ApiErrorCode.INTERNAL_ERROR, 'Failed to create feed post.');
+  }
+});
+
+/**
+ * PATCH /api/feed/posts/:id/pin
+ * Pin or unpin an official announcement.
+ * Restricted strictly to ADMIN and SUPER_ADMIN.
+ * Body: { isPinned: boolean }
+ */
+router.patch('/posts/:id/pin', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const user = req.user!;
+    if (user.status !== UserStatus.ACTIVE && user.status !== 'ACTIVE') {
+      return sendError(res, 403, ApiErrorCode.FORBIDDEN, 'Only active users can pin or unpin posts.');
+    }
+
+    if (user.role !== UserRole.ADMIN && user.role !== UserRole.SUPER_ADMIN) {
+      return sendError(
+        res,
+        403,
+        ApiErrorCode.FORBIDDEN,
+        'Only administrators can pin or unpin posts.'
+      );
+    }
+
+    const postId = req.params.id;
+    if (!postId || typeof postId !== 'string' || postId.trim().length === 0) {
+      return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, 'Post ID is required.');
+    }
+
+    const { isPinned } = req.body || {};
+    if (typeof isPinned !== 'boolean') {
+      return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, 'isPinned must be a boolean.');
+    }
+
+    const post = await feedService.setPostPinned(postId.trim(), isPinned, {
+      id: user.id,
+      role: user.role,
+      status: user.status,
+    });
+
+    return sendSuccess(res, { post });
+  } catch (error: any) {
+    console.error('[FeedRoutes] setPostPinned error:', error?.message || error);
+    if (error?.message === 'Post not found.') {
+      return sendError(res, 404, ApiErrorCode.NOT_FOUND, 'Post not found.');
+    }
+    if (error?.message?.includes('Forbidden') || error?.message?.includes('administrators')) {
+      return sendError(res, 403, ApiErrorCode.FORBIDDEN, error.message);
+    }
+    if (error?.message?.includes('Only official announcements')) {
+      return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, error.message);
+    }
+    return sendError(res, 500, ApiErrorCode.INTERNAL_ERROR, 'Failed to update post pin status.');
+  }
+});
+
+/**
+ * PATCH /api/feed/posts/:id
+ * General post update endpoint (supporting { isPinned: boolean }).
+ */
+router.patch('/posts/:id', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const user = req.user!;
+    if (user.status !== UserStatus.ACTIVE && user.status !== 'ACTIVE') {
+      return sendError(res, 403, ApiErrorCode.FORBIDDEN, 'Only active users can update posts.');
+    }
+
+    const postId = req.params.id;
+    if (!postId || typeof postId !== 'string' || postId.trim().length === 0) {
+      return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, 'Post ID is required.');
+    }
+
+    const { isPinned } = req.body || {};
+    if (isPinned !== undefined) {
+      if (typeof isPinned !== 'boolean') {
+        return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, 'isPinned must be a boolean.');
+      }
+
+      if (user.role !== UserRole.ADMIN && user.role !== UserRole.SUPER_ADMIN) {
+        return sendError(
+          res,
+          403,
+          ApiErrorCode.FORBIDDEN,
+          'Only administrators can pin or unpin posts.'
+        );
+      }
+
+      const post = await feedService.setPostPinned(postId.trim(), isPinned, {
+        id: user.id,
+        role: user.role,
+        status: user.status,
+      });
+
+      return sendSuccess(res, { post });
+    }
+
+    return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, 'No valid update fields provided.');
+  } catch (error: any) {
+    console.error('[FeedRoutes] updatePost error:', error?.message || error);
+    if (error?.message === 'Post not found.') {
+      return sendError(res, 404, ApiErrorCode.NOT_FOUND, 'Post not found.');
+    }
+    if (error?.message?.includes('Forbidden') || error?.message?.includes('administrators')) {
+      return sendError(res, 403, ApiErrorCode.FORBIDDEN, error.message);
+    }
+    if (error?.message?.includes('Only official announcements')) {
+      return sendError(res, 400, ApiErrorCode.VALIDATION_ERROR, error.message);
+    }
+    return sendError(res, 500, ApiErrorCode.INTERNAL_ERROR, 'Failed to update post.');
   }
 });
 

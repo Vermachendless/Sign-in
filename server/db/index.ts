@@ -76,6 +76,68 @@ export function getDatabase(): DatabaseSync {
     console.warn('Migration warning for visitor_visits:', migErr);
   }
 
+  // Ensure feed_posts table has announcement columns if table already existed prior to Phase 2A
+  let openedAnnouncementTx = false;
+  try {
+    const feedPostsTable = dbInstance.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='feed_posts'").get();
+    if (feedPostsTable) {
+      const feedPostsColumns = dbInstance.prepare("PRAGMA table_info(feed_posts)").all() as { name: string }[];
+      const colNames = feedPostsColumns.map((c) => c.name);
+      const missingAnnouncement = !colNames.includes('is_announcement');
+      const missingPriority = !colNames.includes('priority');
+      const missingPinnedAt = !colNames.includes('pinned_at');
+
+      if (missingAnnouncement || missingPriority || missingPinnedAt) {
+        const inTransaction = Boolean(
+          (dbInstance as any).inTransaction ?? (dbInstance as any).isTransaction
+        );
+        if (!inTransaction) {
+          dbInstance.exec('BEGIN IMMEDIATE;');
+          openedAnnouncementTx = true;
+        }
+
+        if (missingAnnouncement) {
+          dbInstance.exec("ALTER TABLE feed_posts ADD COLUMN is_announcement BOOLEAN NOT NULL DEFAULT 0;");
+        }
+        if (missingPriority) {
+          dbInstance.exec("ALTER TABLE feed_posts ADD COLUMN priority TEXT NOT NULL DEFAULT 'NORMAL' CHECK(priority IN ('NORMAL', 'IMPORTANT', 'URGENT'));");
+        }
+        if (missingPinnedAt) {
+          dbInstance.exec("ALTER TABLE feed_posts ADD COLUMN pinned_at TEXT;");
+        }
+
+        if (openedAnnouncementTx) {
+          dbInstance.exec('COMMIT;');
+          openedAnnouncementTx = false;
+        }
+      }
+    }
+  } catch (migErr) {
+    if (openedAnnouncementTx) {
+      try {
+        const inTransaction = Boolean(
+          (dbInstance as any).inTransaction ?? (dbInstance as any).isTransaction
+        );
+        if (inTransaction) {
+          dbInstance.exec('ROLLBACK;');
+        }
+      } catch (rbErr) {
+        console.error('Failed to rollback announcement migration transaction:', rbErr);
+      }
+      openedAnnouncementTx = false;
+    }
+
+    try {
+      dbInstance.close();
+    } catch (closeErr) {
+      console.error('Failed to close database instance after migration failure:', closeErr);
+    }
+    dbInstance = null;
+
+    console.error('Fatal initialization error for feed_posts announcement migration:', migErr);
+    throw new Error(`[FATAL] Failed to migrate feed_posts announcement columns: ${(migErr as Error).message}`);
+  }
+
   return dbInstance;
 }
 

@@ -3,7 +3,14 @@ import { FeedPostItem, FeedReactionType } from './types.ts';
 import { UserRole } from '../../types/index.ts';
 import { FeedReactionsBar } from './FeedReactionsBar.tsx';
 import { FeedCommentThread } from './FeedCommentThread.tsx';
-import { Trash2, AlertCircle } from 'lucide-react';
+import {
+  Trash2,
+  AlertCircle,
+  AlertTriangle,
+  Megaphone,
+  Pin,
+  Loader2,
+} from 'lucide-react';
 
 interface FeedPostCardProps {
   post: FeedPostItem;
@@ -54,11 +61,20 @@ export const FeedPostCard: React.FC<FeedPostCardProps> = ({
   const [isDeleting, setIsDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [cardError, setCardError] = useState<string | null>(null);
+  const [isPinning, setIsPinning] = useState(false);
+
+  const isAnnouncement = Boolean(post.isAnnouncement);
+  const isPinned = Boolean(post.pinnedAt);
+  const priority = post.priority || 'NORMAL';
 
   const canDelete =
     post.author.id === currentUserId ||
     currentUserRole === UserRole.ADMIN ||
     currentUserRole === UserRole.SUPER_ADMIN;
+
+  const canPin =
+    isAnnouncement &&
+    (currentUserRole === UserRole.ADMIN || currentUserRole === UserRole.SUPER_ADMIN);
 
   const handleDeletePost = async () => {
     setIsDeleting(true);
@@ -75,7 +91,8 @@ export const FeedPostCard: React.FC<FeedPostCardProps> = ({
           return;
         }
         const data = await res.json().catch(() => null);
-        const errorMsg = data?.error?.message || 'Failed to delete post.';
+        const errorMsg =
+          data?.message || data?.error?.message || 'Failed to delete post.';
         setCardError(errorMsg);
         return;
       }
@@ -86,6 +103,52 @@ export const FeedPostCard: React.FC<FeedPostCardProps> = ({
     } finally {
       setIsDeleting(false);
       setShowDeleteConfirm(false);
+    }
+  };
+
+  const handleTogglePin = async () => {
+    if (isPinning || !canPin) return;
+    setIsPinning(true);
+    setCardError(null);
+
+    const targetPinnedState = !isPinned;
+
+    try {
+      const res = await fetch(
+        `/api/feed/posts/${encodeURIComponent(post.id)}/pin`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({ isPinned: targetPinnedState }),
+        }
+      );
+
+      if (!res.ok) {
+        if (res.status === 401) {
+          onError?.('Authentication required. Please refresh or sign in again.');
+          return;
+        }
+        const data = await res.json().catch(() => null);
+        const errorMsg =
+          data?.message || data?.error?.message || 'Failed to update pin status.';
+        setCardError(errorMsg);
+        onError?.(errorMsg);
+        return;
+      }
+
+      const json = await res.json();
+      if (json.success && json.data?.post) {
+        onPostUpdated(json.data.post);
+      }
+    } catch {
+      const netError = 'Network error while updating pin status.';
+      setCardError(netError);
+      onError?.(netError);
+    } finally {
+      setIsPinning(false);
     }
   };
 
@@ -158,7 +221,50 @@ export const FeedPostCard: React.FC<FeedPostCardProps> = ({
   };
 
   return (
-    <article className="bg-white rounded-xl border border-neutral-200 shadow-xs p-4 sm:p-5 transition-shadow hover:shadow-sm space-y-3">
+    <article
+      className={`bg-white rounded-xl border shadow-xs p-4 sm:p-5 transition-shadow hover:shadow-sm space-y-3 ${
+        isAnnouncement
+          ? priority === 'URGENT'
+            ? 'border-neutral-300 border-l-4 border-l-rose-500'
+            : priority === 'IMPORTANT'
+            ? 'border-neutral-300 border-l-4 border-l-amber-500'
+            : 'border-neutral-300 border-l-4 border-l-brand-yellow'
+          : 'border-neutral-200'
+      }`}
+    >
+      {/* Official Announcement Banner Header */}
+      {isAnnouncement && (
+        <div className="flex flex-wrap items-center justify-between gap-2 pb-1 border-b border-neutral-100">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-md bg-brand-yellow/20 text-neutral-900 border border-amber-300/80">
+              <Megaphone className="w-3 h-3 text-neutral-900" />
+              Official Announcement
+            </span>
+
+            {priority === 'URGENT' && (
+              <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-md bg-rose-100 text-rose-800 border border-rose-300">
+                <AlertTriangle className="w-3 h-3 text-rose-600" />
+                URGENT
+              </span>
+            )}
+
+            {priority === 'IMPORTANT' && (
+              <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-300">
+                <AlertCircle className="w-3 h-3 text-amber-700" />
+                Important
+              </span>
+            )}
+          </div>
+
+          {isPinned && (
+            <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-md bg-amber-50 text-amber-900 border border-amber-200/80">
+              <Pin className="w-3 h-3 rotate-45 text-amber-700 fill-amber-500" />
+              Pinned
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Post Author Header */}
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3">
@@ -185,48 +291,84 @@ export const FeedPostCard: React.FC<FeedPostCardProps> = ({
           </div>
         </div>
 
-        {/* Delete post action if permitted */}
-        {canDelete && (
-          <div className="relative">
-            {showDeleteConfirm ? (
-              <div className="flex items-center gap-1.5 bg-rose-50 border border-rose-200 p-1.5 rounded-lg">
-                <span className="text-xs text-rose-700 font-medium">Delete post?</span>
+        {/* Post Actions: Pin & Delete */}
+        <div className="flex items-center gap-1 shrink-0">
+          {/* Pin/Unpin action: ADMIN and SUPER_ADMIN only, on announcements only */}
+          {canPin && (
+            <button
+              type="button"
+              onClick={handleTogglePin}
+              disabled={isPinning}
+              title={isPinned ? 'Unpin announcement' : 'Pin announcement to top'}
+              aria-label={isPinned ? 'Unpin announcement' : 'Pin announcement to top'}
+              className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                isPinned
+                  ? 'text-amber-800 bg-amber-100 hover:bg-amber-200'
+                  : 'text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100'
+              }`}
+            >
+              {isPinning ? (
+                <Loader2 className="w-4 h-4 animate-spin text-amber-600" />
+              ) : (
+                <Pin
+                  className={`w-4 h-4 ${
+                    isPinned ? 'rotate-45 fill-amber-600 text-amber-700' : ''
+                  }`}
+                />
+              )}
+            </button>
+          )}
+
+          {/* Delete post action if permitted */}
+          {canDelete && (
+            <div className="relative">
+              {showDeleteConfirm ? (
+                <div className="flex items-center gap-1.5 bg-rose-50 border border-rose-200 p-1.5 rounded-lg">
+                  <span className="text-xs text-rose-700 font-medium">Delete post?</span>
+                  <button
+                    type="button"
+                    onClick={handleDeletePost}
+                    disabled={isDeleting}
+                    className="px-2 py-0.5 text-xs font-semibold bg-rose-600 text-white rounded hover:bg-rose-700 disabled:opacity-50 cursor-pointer"
+                  >
+                    {isDeleting ? 'Deleting...' : 'Confirm'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowDeleteConfirm(false)}
+                    className="px-2 py-0.5 text-xs font-medium bg-neutral-200 text-neutral-700 rounded hover:bg-neutral-300 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
                 <button
                   type="button"
-                  onClick={handleDeletePost}
-                  disabled={isDeleting}
-                  className="px-2 py-0.5 text-xs font-semibold bg-rose-600 text-white rounded hover:bg-rose-700 disabled:opacity-50 cursor-pointer"
+                  onClick={() => setShowDeleteConfirm(true)}
+                  title="Delete this announcement"
+                  aria-label="Delete this announcement"
+                  className="p-1.5 text-neutral-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
                 >
-                  {isDeleting ? 'Deleting...' : 'Confirm'}
+                  <Trash2 className="w-4 h-4" />
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setShowDeleteConfirm(false)}
-                  className="px-2 py-0.5 text-xs font-medium bg-neutral-200 text-neutral-700 rounded hover:bg-neutral-300 cursor-pointer"
-                >
-                  Cancel
-                </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setShowDeleteConfirm(true)}
-                title="Delete this announcement"
-                aria-label="Delete this announcement"
-                className="p-1.5 text-neutral-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            )}
-          </div>
-        )}
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* Card error banner if deletion failed */}
+      {/* Card error banner if action failed */}
       {cardError && (
         <div className="flex items-center gap-1.5 p-2 bg-rose-50 border border-rose-200 rounded-md text-rose-700 text-xs">
           <AlertCircle className="w-4 h-4 shrink-0" />
-          <span>{cardError}</span>
+          <span className="flex-1">{cardError}</span>
+          <button
+            type="button"
+            onClick={() => setCardError(null)}
+            className="text-[11px] text-rose-500 hover:text-rose-700 font-semibold cursor-pointer"
+          >
+            Dismiss
+          </button>
         </div>
       )}
 

@@ -2,6 +2,8 @@ import { UserRole, UserStatus } from '../../types/index.ts';
 
 export type FeedReactionType = 'LIKE' | 'CELEBRATE' | 'SUPPORT' | 'INSIGHTFUL';
 
+export type AnnouncementPriority = 'NORMAL' | 'IMPORTANT' | 'URGENT';
+
 export interface FeedAuthor {
   id: string;
   email: string;
@@ -21,12 +23,17 @@ export interface FeedPostStats {
 export interface FeedPostItem {
   id: string;
   content: string;
+  isAnnouncement?: boolean;
+  priority?: AnnouncementPriority;
+  pinnedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   author: FeedAuthor;
   stats: FeedPostStats;
   currentUserReaction: FeedReactionType | null;
 }
+
+export type FeedPost = FeedPostItem;
 
 export interface FeedCommentItem {
   id: string;

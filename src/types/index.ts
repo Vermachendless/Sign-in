@@ -589,6 +589,7 @@ export enum NotificationType {
   EVENT_SUBMITTED = 'EVENT_SUBMITTED',
   ATTENDANCE_OVERRIDE = 'ATTENDANCE_OVERRIDE',
   SYSTEM = 'SYSTEM',
+  ANNOUNCEMENT = 'ANNOUNCEMENT',
 }
 
 export interface NotificationRecord {
@@ -696,6 +697,8 @@ export interface ConversationListResponse {
 
 export type FeedReactionType = 'LIKE' | 'CELEBRATE' | 'SUPPORT' | 'INSIGHTFUL';
 
+export type AnnouncementPriority = 'NORMAL' | 'IMPORTANT' | 'URGENT';
+
 export interface FeedAuthor {
   id: string;
   email: string;
@@ -710,6 +713,9 @@ export interface FeedPostRecord {
   id: string;
   authorId: string;
   content: string;
+  isAnnouncement?: boolean;
+  priority?: AnnouncementPriority;
+  pinnedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -717,6 +723,9 @@ export interface FeedPostRecord {
 export interface FeedPostItem {
   id: string;
   content: string;
+  isAnnouncement?: boolean;
+  priority?: AnnouncementPriority;
+  pinnedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   author: FeedAuthor;
@@ -727,6 +736,8 @@ export interface FeedPostItem {
   };
   currentUserReaction: FeedReactionType | null;
 }
+
+export type FeedPost = FeedPostItem;
 
 export interface FeedCommentRecord {
   id: string;

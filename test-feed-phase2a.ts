@@ -102,10 +102,17 @@ async function main() {
     assert(DB_SCHEMA_SQL.includes('CREATE TABLE IF NOT EXISTS feed_reactions'), 'SQLite schema must contain feed_reactions');
     assert(DB_SCHEMA_SQL.includes('idx_feed_posts_created_at'), 'SQLite schema must contain idx_feed_posts_created_at');
 
+    assert(DB_SCHEMA_SQL.includes('is_announcement BOOLEAN NOT NULL DEFAULT 0'), 'SQLite schema must contain is_announcement');
+    assert(DB_SCHEMA_SQL.includes("CHECK(priority IN ('NORMAL', 'IMPORTANT', 'URGENT'))"), 'SQLite schema must contain priority CHECK');
+    assert(DB_SCHEMA_SQL.includes('pinned_at TEXT'), 'SQLite schema must contain pinned_at');
+
     assert(POSTGRES_SCHEMA_SQL.includes('CREATE TABLE IF NOT EXISTS feed_posts'), 'PostgreSQL schema must contain feed_posts');
     assert(POSTGRES_SCHEMA_SQL.includes('CREATE TABLE IF NOT EXISTS feed_comments'), 'PostgreSQL schema must contain feed_comments');
     assert(POSTGRES_SCHEMA_SQL.includes('CREATE TABLE IF NOT EXISTS feed_reactions'), 'PostgreSQL schema must contain feed_reactions');
     assert(POSTGRES_SCHEMA_SQL.includes('idx_feed_posts_created_at'), 'PostgreSQL schema must contain idx_feed_posts_created_at');
+    assert(POSTGRES_SCHEMA_SQL.includes('is_announcement BOOLEAN NOT NULL DEFAULT FALSE'), 'PostgreSQL schema must contain is_announcement');
+    assert(POSTGRES_SCHEMA_SQL.includes("CHECK (priority IN ('NORMAL', 'IMPORTANT', 'URGENT'))"), 'PostgreSQL schema must contain priority CHECK');
+    assert(POSTGRES_SCHEMA_SQL.includes('pinned_at TIMESTAMPTZ'), 'PostgreSQL schema must contain pinned_at');
   });
 
   await runTest('SQLite database initializes feed tables and indexes idempotently', () => {
@@ -207,7 +214,8 @@ async function main() {
     assert.strictEqual(comment1.author.id, users.activeStaff2);
     assert.strictEqual(comment1.postId, sharedPostId);
 
-    // Add a second comment
+    // Add a second comment with a distinct timestamp to verify chronological ordering
+    await new Promise((resolve) => setTimeout(resolve, 15));
     const comment2 = await feedService.createComment(sharedPostId, users.activeStaff1, 'Thank you John!');
     assert.strictEqual(comment2.content, 'Thank you John!');
 

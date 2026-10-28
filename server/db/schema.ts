@@ -263,6 +263,9 @@ CREATE TABLE IF NOT EXISTS feed_posts (
   id TEXT PRIMARY KEY,
   author_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   content TEXT NOT NULL,
+  is_announcement BOOLEAN NOT NULL DEFAULT 0,
+  priority TEXT NOT NULL CHECK(priority IN ('NORMAL', 'IMPORTANT', 'URGENT')) DEFAULT 'NORMAL',
+  pinned_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
